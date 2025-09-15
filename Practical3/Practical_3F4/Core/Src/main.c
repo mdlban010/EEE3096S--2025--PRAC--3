@@ -31,15 +31,23 @@ typedef struct {
     uint16_t width;
     uint16_t height;
     uint32_t exec_time_ms;
-    uint16_t max_iter;
     uint64_t checksum;
 } Task1Result;
+typedef struct {
+    uint16_t width;
+    uint16_t height;
+    uint32_t exec_time_ms;
+    uint16_t max_iter;
+    uint64_t checksum;
+} Task2Result;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 #define MAX_ITER   100
 #define SCALE      1000000
+
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -60,11 +68,13 @@ static const uint16_t test_sizes[][2] = {
 // Per-size results for each kernel
 volatile Task1Result task1_fixed[5];
 volatile Task1Result task1_double[5];
+volatile Task2Result task2_results[5][5]; // [max_iter_index][size_index]
 
 // Handy live variables to watch
 volatile uint32_t start_time = 0, end_time = 0;
 volatile uint16_t current_width  = 0;
 volatile uint16_t current_height = 0;
+
 
 volatile uint64_t checksum_fixed   = 0;
 volatile uint32_t exec_time_fixed  = 0;
@@ -77,7 +87,7 @@ volatile uint32_t current_exec_time = 0;
 
 // Progress: 0..9 (5 sizes × 2 kernels)
 volatile uint32_t progress = 0;
-volatile Task2Result task2_results[5][5]; // [max_iter_index][size_index]
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -135,8 +145,9 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    static uint8_t done = 0;
-    if (!done){
+    static uint8_t task1_done = 0;
+    static uint8_t task2_done = 0;
+    if (!task1_done){
       // Visual indicator: Turn on LED0 to signal processing start
       HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);
 
@@ -182,7 +193,42 @@ int main(void)
       HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);
       HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_RESET);
 
-      done = 1;
+      task1_done = 1;
+    }
+
+    else if(!task2_done){
+      // Task 2: Test different MAX_ITER values
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2, GPIO_PIN_SET); // LED2 for Task 2
+    
+    for (int iter_idx = 0; iter_idx < num_max_iter_tests; iter_idx++) {
+        uint16_t current_max_iter = max_iter_values[iter_idx];
+        
+        for (int size_idx = 0; size_idx < 5; size_idx++) {
+            current_width = test_sizes[size_idx][0];
+            current_height = test_sizes[size_idx][1];
+            
+            // Fixed-point implementation
+            start_time = HAL_GetTick();
+            uint64_t checksum = calculate_mandelbrot_fixed_point_arithmetic(
+                current_width, current_height, current_max_iter);
+            end_time = HAL_GetTick();
+            
+            task2_results[iter_idx][size_idx].width = current_width;
+            task2_results[iter_idx][size_idx].height = current_height;
+            task2_results[iter_idx][size_idx].max_iter = current_max_iter;
+            task2_results[iter_idx][size_idx].exec_time_ms = end_time - start_time;
+            task2_results[iter_idx][size_idx].checksum = checksum;
+            
+            progress++;
+        }
+    }
+    
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3, GPIO_PIN_SET); // LED3 for completion
+    HAL_Delay(2000);
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3, GPIO_PIN_RESET);
+    
+    task2_done = 1;
     }
   }
   /* USER CODE END 3 */
