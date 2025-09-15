@@ -74,6 +74,7 @@ volatile Task2Result task2_results[5][5]; // [max_iter_index][size_index]
 volatile uint32_t start_time = 0, end_time = 0;
 volatile uint16_t current_width  = 0;
 volatile uint16_t current_height = 0;
+volatile uint16_t current_max_iter = 0;
 
 
 volatile uint64_t checksum_fixed   = 0;
@@ -147,7 +148,7 @@ int main(void)
     /* USER CODE BEGIN 3 */
     static uint8_t task1_done = 0;
     static uint8_t task2_done = 0;
-    if (!task1_done){
+    if (task1_done){
       // Visual indicator: Turn on LED0 to signal processing start
       HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);
 
@@ -201,7 +202,7 @@ int main(void)
     HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2, GPIO_PIN_SET); // LED2 for Task 2
     
     for (int iter_idx = 0; iter_idx < num_max_iter_tests; iter_idx++) {
-        uint16_t current_max_iter = max_iter_values[iter_idx];
+        current_max_iter = max_iter_values[iter_idx];
         
         for (int size_idx = 0; size_idx < 5; size_idx++) {
             current_width = test_sizes[size_idx][0];

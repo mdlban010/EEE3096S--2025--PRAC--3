@@ -26,12 +26,19 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-
+typedef struct {
+    uint16_t width;
+    uint16_t height;
+    uint32_t exec_time_ms;
+    uint16_t max_iter;
+    uint64_t checksum;
+} Task2Result;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+#define MAX_ITER   100
+#define SCALE      1000000
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -44,6 +51,20 @@
 /* USER CODE BEGIN PV */
 //TODO: Define variables you think you might need
 // - Performance timing variables (e.g execution time, throughput, pixels per second, clock cycles)
+static const uint16_t max_iter_values[] = {100, 250, 500, 750, 1000};
+static const uint8_t num_max_iter_tests = 5;
+
+static const uint16_t test_sizes[][2] = {
+    {128, 128}, {160, 160}, {192, 192}, {224, 224}, {256, 256}
+};
+
+volatile Task2Result task2_results[5][5];
+volatile uint32_t start_time = 0, end_time = 0;
+volatile uint16_t current_width  = 0;
+volatile uint16_t current_height = 0;
+volatile uint16_t current_max_iter = 0;
+volatile uint32_t progress = 0;
+volatile uint8_t task2_done = 0;
 
 /* USER CODE END PV */
 
@@ -52,7 +73,7 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 /* USER CODE BEGIN PFP */
 //TODO: Define any function prototypes you might need such as the calculate Mandelbrot function among others
-
+uint64_t calculate_mandelbrot_fixed_point_arithmetic(int width, int height, int max_iterations);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -100,12 +121,42 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    
 	  //TODO: Visual indicator: Turn on LED0 to signal processing start
-
-
 	  //TODO: Benchmark and Profile Performance
-
-
+    if(!task2_done){
+      // Task 2: Test different MAX_ITER values
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2, GPIO_PIN_SET); // LED2 for Task 2
+    
+    for (int iter_idx = 0; iter_idx < num_max_iter_tests; iter_idx++) {
+        current_max_iter = max_iter_values[iter_idx];
+        
+        for (int size_idx = 0; size_idx < 5; size_idx++) {
+            current_width = test_sizes[size_idx][0];
+            current_height = test_sizes[size_idx][1];
+            
+            // Fixed-point implementation
+            start_time = HAL_GetTick();
+            uint64_t checksum = calculate_mandelbrot_fixed_point_arithmetic(
+                current_width, current_height, current_max_iter);
+            end_time = HAL_GetTick();
+            
+            task2_results[iter_idx][size_idx].width = current_width;
+            task2_results[iter_idx][size_idx].height = current_height;
+            task2_results[iter_idx][size_idx].max_iter = current_max_iter;
+            task2_results[iter_idx][size_idx].exec_time_ms = end_time - start_time;
+            task2_results[iter_idx][size_idx].checksum = checksum;
+            
+            progress++;
+        }
+    }
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3, GPIO_PIN_SET); // LED3 for completion
+    HAL_Delay(2000);
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3, GPIO_PIN_RESET);
+    
+    task2_done = 1;
+    }
 	  //TODO: Visual indicator: Turn on LED1 to signal processing start
 
 
@@ -194,7 +245,31 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE BEGIN 4 */
 //TODO: Function signatures you defined previously , implement them here
+uint64_t calculate_mandelbrot_fixed_point_arithmetic(int width, int height, int max_iterations){
+  uint64_t mandelbrot_sum = 0;
+    for (int y = 0; y < height; y++){
+      for(int x = 0; x < width; x++){
+        int32_t x0 = ((int64_t)x *3500000)/width-2500000;
+        int32_t y0 = ((int64_t)y *2000000)/height-1000000;
 
+        int32_t xi = 0, yi = 0;
+        int iterations = 0;
+
+        while(iterations < max_iterations){
+          int64_t xi2 = ((int64_t)xi * xi) / SCALE;
+          int64_t yi2 = ((int64_t)yi * yi) / SCALE;
+
+          if(xi2 + yi2 > 4000000) break;
+          int32_t temp = xi2 - yi2;
+          yi = (2 * (int64_t)xi * yi) / SCALE + y0;
+          xi = temp + x0;
+          iterations++;
+        }
+        mandelbrot_sum += iterations;
+      }
+    }
+    return mandelbrot_sum;
+}
 /* USER CODE END 4 */
 
 /**
