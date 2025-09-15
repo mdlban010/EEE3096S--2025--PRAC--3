@@ -49,13 +49,12 @@ typedef struct {
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-//TODO: Define variables you think you might need
-// - Performance timing variables (e.g execution time, throughput, pixels per second, clock cycles)
+// Performance timing variables
 static const uint16_t test_sizes[][2] = {
     {128, 128}, {160, 160}, {192, 192}, {224, 224}, {256, 256}
 };
 
-/// Per-size results for each kernel (visible in Live Expressions)
+// Per-size results for each kernel
 volatile Task1Result task1_fixed[5];
 volatile Task1Result task1_double[5];
 
@@ -70,8 +69,8 @@ volatile uint32_t exec_time_fixed  = 0;
 volatile uint64_t checksum_double  = 0;
 volatile uint32_t exec_time_double = 0;
 
-volatile uint64_t current_checksum = 0;  // last run (either kernel)
-volatile uint32_t current_exec_time = 0; // last run (either kernel)
+volatile uint64_t current_checksum = 0;
+volatile uint32_t current_exec_time = 0;
 
 // Progress: 0..9 (5 sizes × 2 kernels)
 volatile uint32_t progress = 0;
@@ -82,8 +81,7 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 /* USER CODE BEGIN PFP */
 
-
-//TODO: Define any function prototypes you might need such as the calculate Mandelbrot function among others
+// Mandelbrot function prototypes
 uint64_t calculate_mandelbrot_fixed_point_arithmetic(int width, int height, int max_iterations);
 uint64_t calculate_mandelbrot_double(int width, int height, int max_iterations);
 
@@ -100,7 +98,6 @@ uint64_t calculate_mandelbrot_double(int width, int height, int max_iterations);
   */
 int main(void)
 {
-
   /* USER CODE BEGIN 1 */
 
   /* USER CODE END 1 */
@@ -136,11 +133,10 @@ int main(void)
     /* USER CODE BEGIN 3 */
     static uint8_t done = 0;
     if (!done){
+      // Visual indicator: Turn on LED0 to signal processing start
+      HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);
 
-	  //TODO: Visual indicator: Turn on LED0 to signal processing start
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);
-
-	  //TODO: Benchmark and Profile Performance
+      // Benchmark and Profile Performance for both implementations
       for (int i = 0; i < 5; i++) {
         current_width = test_sizes[i][0];
         current_height = test_sizes[i][1];
@@ -170,13 +166,20 @@ int main(void)
         task1_double[i].checksum = checksum_double;
         
         progress++;
+      }
+
+      // Visual indicator: Turn on LED1 to signal processing completion
+      HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_SET);
+
+      // Keep the LEDs ON for 2s
+      HAL_Delay(2000);
+
+      // Turn OFF LEDs
+      HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);
+      HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_RESET);
+
+      done = 1;
     }
-	  //TODO: Visual indicator: Turn on LED1 to signal processing start
-
-
-	  //TODO: Keep the LEDs ON for 2s
-
-	  //TODO: Turn OFF LEDs
   }
   /* USER CODE END 3 */
 }
@@ -263,7 +266,7 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-//TODO: Function signatures you defined previously , implement them here
+// Mandelbrot implementations
 uint64_t calculate_mandelbrot_fixed_point_arithmetic(int width, int height, int max_iterations){
   uint64_t mandelbrot_sum = 0;
     for (int y = 0; y < height; y++){
@@ -288,9 +291,7 @@ uint64_t calculate_mandelbrot_fixed_point_arithmetic(int width, int height, int 
       }
     }
     return mandelbrot_sum;
-
 }
-
 
 uint64_t calculate_mandelbrot_double(int width, int height, int max_iterations){
     uint64_t mandelbrot_sum = 0;
@@ -329,6 +330,7 @@ void Error_Handler(void)
   }
   /* USER CODE END Error_Handler_Debug */
 }
+
 #ifdef USE_FULL_ASSERT
 /**
   * @brief  Reports the name of the source file and the source line number
