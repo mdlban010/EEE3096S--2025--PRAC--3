@@ -55,17 +55,25 @@ static const uint16_t test_sizes[][2] = {
     {128, 128}, {160, 160}, {192, 192}, {224, 224}, {256, 256}
 };
 
-// Global variables for timing and results
-volatile uint32_t start_time = 0;
-volatile uint32_t end_time = 0;
-volatile uint16_t current_width = 0;
-volatile uint16_t current_height = 0;
-volatile uint64_t current_checksum = 0;
-volatile uint32_t current_exec_time = 0;
+/// Per-size results for each kernel (visible in Live Expressions)
+volatile Task1Result task1_fixed[5];
+volatile Task1Result task1_double[5];
 
-// Results storage for all test sizes
-volatile Task1Result task1_results[5];
-volatile uint32_t current_test_index = 0;
+// Handy live variables to watch
+volatile uint32_t start_time = 0, end_time = 0;
+volatile uint16_t current_width  = 0;
+volatile uint16_t current_height = 0;
+
+volatile uint64_t checksum_fixed   = 0;
+volatile uint32_t exec_time_fixed  = 0;
+
+volatile uint64_t checksum_double  = 0;
+volatile uint32_t exec_time_double = 0;
+
+volatile uint64_t current_checksum = 0;  // last run (either kernel)
+volatile uint32_t current_exec_time = 0; // last run (either kernel)
+
+// Progress: 0..9 (5 sizes × 2 kernels)
 volatile uint32_t progress = 0;
 /* USER CODE END PV */
 
@@ -73,6 +81,8 @@ volatile uint32_t progress = 0;
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 /* USER CODE BEGIN PFP */
+
+
 //TODO: Define any function prototypes you might need such as the calculate Mandelbrot function among others
 uint64_t calculate_mandelbrot_fixed_point_arithmetic(int width, int height, int max_iterations);
 uint64_t calculate_mandelbrot_double(int width, int height, int max_iterations);
@@ -124,12 +134,43 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-	  //TODO: Visual indicator: Turn on LED0 to signal processing start
+    static uint8_t done = 0;
+    if (!done){
 
+	  //TODO: Visual indicator: Turn on LED0 to signal processing start
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);
 
 	  //TODO: Benchmark and Profile Performance
-
-
+      for (int i = 0; i < 5; i++) {
+        current_width = test_sizes[i][0];
+        current_height = test_sizes[i][1];
+        
+        // Fixed-point arithmetic implementation
+        start_time = HAL_GetTick();
+        checksum_fixed = calculate_mandelbrot_fixed_point_arithmetic(current_width, current_height, MAX_ITER);
+        end_time = HAL_GetTick();
+        exec_time_fixed = end_time - start_time;
+        
+        task1_fixed[i].width = current_width;
+        task1_fixed[i].height = current_height;
+        task1_fixed[i].exec_time_ms = exec_time_fixed;
+        task1_fixed[i].checksum = checksum_fixed;
+        
+        progress++;
+        
+        // Double implementation
+        start_time = HAL_GetTick();
+        checksum_double = calculate_mandelbrot_double(current_width, current_height, MAX_ITER);
+        end_time = HAL_GetTick();
+        exec_time_double = end_time - start_time;
+        
+        task1_double[i].width = current_width;
+        task1_double[i].height = current_height;
+        task1_double[i].exec_time_ms = exec_time_double;
+        task1_double[i].checksum = checksum_double;
+        
+        progress++;
+    }
 	  //TODO: Visual indicator: Turn on LED1 to signal processing start
 
 
@@ -225,7 +266,6 @@ static void MX_GPIO_Init(void)
 //TODO: Function signatures you defined previously , implement them here
 uint64_t calculate_mandelbrot_fixed_point_arithmetic(int width, int height, int max_iterations){
   uint64_t mandelbrot_sum = 0;
-    //TODO: Complete the function implementation
     for (int y = 0; y < height; y++){
       for(int x = 0; x < width; x++){
         int32_t x0 = ((int64_t)x *3500000)/width-2500000;
@@ -254,7 +294,6 @@ uint64_t calculate_mandelbrot_fixed_point_arithmetic(int width, int height, int 
 
 uint64_t calculate_mandelbrot_double(int width, int height, int max_iterations){
     uint64_t mandelbrot_sum = 0;
-    //TODO: Complete the function implementation
     for (int y = 0; y < height; y++){
       for(int x = 0; x < width; x++){
         double x0 = ((double)x/width)*3.5-2.5;
