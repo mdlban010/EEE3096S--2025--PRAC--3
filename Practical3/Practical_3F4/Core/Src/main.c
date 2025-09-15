@@ -74,6 +74,8 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 /* USER CODE BEGIN PFP */
 //TODO: Define any function prototypes you might need such as the calculate Mandelbrot function among others
+uint64_t calculate_mandelbrot_fixed_point_arithmetic(int width, int height, int max_iterations);
+uint64_t calculate_mandelbrot_double(int width, int height, int max_iterations);
 
 /* USER CODE END PFP */
 
@@ -221,6 +223,56 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE BEGIN 4 */
 //TODO: Function signatures you defined previously , implement them here
+uint64_t calculate_mandelbrot_fixed_point_arithmetic(int width, int height, int max_iterations){
+  uint64_t mandelbrot_sum = 0;
+    //TODO: Complete the function implementation
+    for (int y = 0; y < height; y++){
+      for(int x = 0; x < width; x++){
+        int32_t x0 = ((int64_t)x *3500000)/width-2500000;
+        int32_t y0 = ((int64_t)y *2000000)/height-1000000;
+
+        int32_t xi = 0, yi = 0;
+        int iterations = 0;
+
+        while(iterations < max_iterations){
+          int64_t xi2 = ((int64_t)xi * xi) / SCALE;
+          int64_t yi2 = ((int64_t)yi * yi) / SCALE;
+
+          if(xi2 + yi2 > 4000000) break;
+          int32_t temp = xi2 - yi2;
+          yi = (2 * (int64_t)xi * yi) / SCALE + y0;
+          xi = temp + x0;
+          iterations++;
+        }
+        mandelbrot_sum += iterations;
+      }
+    }
+    return mandelbrot_sum;
+
+}
+
+
+uint64_t calculate_mandelbrot_double(int width, int height, int max_iterations){
+    uint64_t mandelbrot_sum = 0;
+    //TODO: Complete the function implementation
+    for (int y = 0; y < height; y++){
+      for(int x = 0; x < width; x++){
+        double x0 = ((double)x/width)*3.5-2.5;
+        double y0 = ((double)y/height)*2.0-1.0;
+        double xi = 0.0, yi = 0.0;
+        int iterations = 0;
+
+        while(iterations < max_iterations && (xi * xi + yi * yi) <=4.0){
+          double temp = (xi * xi- yi * yi);
+          yi = 2.0* xi * yi + y0;
+          xi = temp + x0;
+          iterations++;
+        }
+        mandelbrot_sum += iterations;
+      }
+    }
+    return mandelbrot_sum;
+}
 
 /* USER CODE END 4 */
 
