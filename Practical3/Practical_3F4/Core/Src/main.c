@@ -31,6 +31,7 @@ typedef struct {
     uint16_t width;
     uint16_t height;
     uint32_t exec_time_ms;
+    uint16_t max_iter;
     uint64_t checksum;
 } Task1Result;
 /* USER CODE END PTD */
@@ -49,6 +50,8 @@ typedef struct {
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
+static const uint16_t max_iter_values[] = {100, 250, 500, 750, 1000};
+static const uint8_t num_max_iter_tests = 5;
 // Performance timing variables
 static const uint16_t test_sizes[][2] = {
     {128, 128}, {160, 160}, {192, 192}, {224, 224}, {256, 256}
@@ -74,6 +77,7 @@ volatile uint32_t current_exec_time = 0;
 
 // Progress: 0..9 (5 sizes × 2 kernels)
 volatile uint32_t progress = 0;
+volatile Task2Result task2_results[5][5]; // [max_iter_index][size_index]
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
