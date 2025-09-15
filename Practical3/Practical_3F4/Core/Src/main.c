@@ -21,17 +21,24 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include <stdint.h>
+#include <math.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-
+typedef struct {
+    uint16_t width;
+    uint16_t height;
+    uint32_t exec_time_ms;
+    uint64_t checksum;
+} Task1Result;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+#define MAX_ITER   100
+#define SCALE      1000000
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -44,7 +51,22 @@
 /* USER CODE BEGIN PV */
 //TODO: Define variables you think you might need
 // - Performance timing variables (e.g execution time, throughput, pixels per second, clock cycles)
+static const uint16_t test_sizes[][2] = {
+    {128, 128}, {160, 160}, {192, 192}, {224, 224}, {256, 256}
+};
 
+// Global variables for timing and results
+volatile uint32_t start_time = 0;
+volatile uint32_t end_time = 0;
+volatile uint16_t current_width = 0;
+volatile uint16_t current_height = 0;
+volatile uint64_t current_checksum = 0;
+volatile uint32_t current_exec_time = 0;
+
+// Results storage for all test sizes
+volatile Task1Result task1_results[5];
+volatile uint32_t current_test_index = 0;
+volatile uint32_t progress = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
