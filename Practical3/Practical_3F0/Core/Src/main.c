@@ -108,15 +108,6 @@ volatile uint16_t t4_current_w = 0, t4_current_h = 0;
 volatile uint32_t t4_exec_ms = 0;
 volatile uint8_t t4_parts = 0;
 
-// Task 4 variables
-static const uint16_t task4_sizes[][2] = {
-    {320, 240},   // QVGA
-    {640, 480},   // VGA
-    {800, 600},   // SVGA
-    {1024, 768},  // XGA
-    {1280, 720},  // HD
-    {1920, 1080}  // Full HD
-};
 
 /* USER CODE END PV */
 
@@ -128,6 +119,7 @@ static void MX_GPIO_Init(void);
 uint64_t calculate_mandelbrot_fixed_point_arithmetic(int width, int height, int max_iterations);
 static uint64_t get_time_us(void);
 static void run_task3_benchmark_f0(void);
+static void run_task4_scalability_test(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -211,7 +203,7 @@ int main(void)
     
     task2_done = 1;
     }
-    else if (!task3_done) {
+    else if (task3_done) {
       // LEDs to show start/finish
       HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET); // LED0 on (start)
       run_task3_benchmark_f0();
@@ -414,16 +406,16 @@ void run_task4_scalability_test(void) {
         uint8_t parts_used = 1; // Default: process in one part
         
         // Check if we need to split due to memory constraints
-        // For STM32F0, we might need to split larger images
         if (total_pixels > 50000) { // Arbitrary threshold for F0 memory
-            parts_used = 4; // Split into 4 parts
+            parts_used = 2; // Split into 2 parts
             for (int part = 0; part < parts_used; part++) {
-                int start_y = (h * part) / parts_used;
-                int end_y = (h * (part + 1)) / parts_used;
+                int mid_point = h/2;
                 
-                checksum += calculate_mandelbrot_fixed_point_arithmetic_partial(
-                    w, h, MAX_ITER, start_y, end_y);
+                checksum += calculate_mandelbrot_fixed_point_arithmetic(
+                    w, mid_point, MAX_ITER);
                 
+                checksum += calculate_mandelbrot_fixed_point_arithmetic(
+                    w, h - mid_point, MAX_ITER);
                 HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_6); // Part completion blip
                 HAL_Delay(10);
             }
