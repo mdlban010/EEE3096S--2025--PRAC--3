@@ -23,6 +23,7 @@
 /* USER CODE BEGIN Includes */
 #include <stdint.h>
 #include <math.h>
+#include "core_cm4.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -40,13 +41,28 @@ typedef struct {
     uint16_t max_iter;
     uint64_t checksum;
 } Task2Result;
+
+typedef struct {
+    uint16_t width;
+    uint16_t height;
+    uint32_t exec_time_ms;
+    uint16_t max_iter;
+    uint64_t checksum;
+    uint32_t cpu_cycles;
+    float throughput_pixels_per_sec;
+} Task3Result;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 #define MAX_ITER   100
 #define SCALE      1000000
+#define CPU_FREQ   120000000 // STM32F4 at 120MHz
 
+// DWT (Data Watchpoint and Trace) register definitions for cycle counter
+#define DWT_CTRL    (*(volatile uint32_t*)0xE0001000)
+#define DWT_CYCCNT  (*(volatile uint32_t*)0xE0001004)
+#define DWT_CTRL_CYCCNTENA_Msk (0x1UL)
 
 /* USER CODE END PD */
 
@@ -69,13 +85,16 @@ static const uint16_t test_sizes[][2] = {
 volatile Task1Result task1_fixed[5];
 volatile Task1Result task1_double[5];
 volatile Task2Result task2_results[5][5]; // [max_iter_index][size_index]
+volatile Task3Result task3_results[5];
 
 // Handy live variables to watch
 volatile uint32_t start_time = 0, end_time = 0;
+volatile uint32_t start_cycles = 0, end_cycles = 0;
 volatile uint16_t current_width  = 0;
 volatile uint16_t current_height = 0;
 volatile uint16_t current_max_iter = 0;
-
+volatile uint32_t current_cycles = 0;
+volatile float current_throughput = 0;
 
 volatile uint64_t checksum_fixed   = 0;
 volatile uint32_t exec_time_fixed  = 0;
@@ -88,6 +107,7 @@ volatile uint32_t current_exec_time = 0;
 
 // Progress: 0..9 (5 sizes × 2 kernels)
 volatile uint32_t progress = 0;
+static uint8_t task3_done = 0;
 
 /* USER CODE END PV */
 
@@ -99,6 +119,8 @@ static void MX_GPIO_Init(void);
 // Mandelbrot function prototypes
 uint64_t calculate_mandelbrot_fixed_point_arithmetic(int width, int height, int max_iterations);
 uint64_t calculate_mandelbrot_double(int width, int height, int max_iterations);
+void dwt_init(void);
+void run_task_3_benchmark(void);
 
 /* USER CODE END PFP */
 
@@ -136,7 +158,7 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   /* USER CODE BEGIN 2 */
-
+  dwt_init(); // calling dwt_init before running task3
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -197,7 +219,7 @@ int main(void)
       task1_done = 1;
     }
 
-    else if(!task2_done){
+    else if(task2_done){
       // Task 2: Test different MAX_ITER values
     HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2, GPIO_PIN_SET); // LED2 for Task 2
     
@@ -231,6 +253,28 @@ int main(void)
     
     task2_done = 1;
     }
+
+    else if (!task3_done) {
+        // Visual indicator: Turn on LED0 to signal Task 3 start
+        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);
+        
+        // Run Task 3: Extended execution time measurement
+        run_task3_benchmark();
+        
+        // Visual indicator: Turn on LED1 to signal completion
+        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_SET);
+        
+        // Keep LEDs on for 2 seconds
+        HAL_Delay(2000);
+        
+        // Turn off LEDs
+        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0 | GPIO_PIN_1, GPIO_PIN_RESET);
+        
+        task3_done = 1;
+    }
+    // heartbeat led to show program is alive
+    HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_2);
+    HAL_Delay(1000);
   }
   /* USER CODE END 3 */
 }
@@ -364,7 +408,88 @@ uint64_t calculate_mandelbrot_double(int width, int height, int max_iterations){
     }
     return mandelbrot_sum;
 }
+/**
+ * @brief Initialize DWT cycle counter for accurate timing
+ */
+void dwt_init(void)
+{
+    /* Enable trace and debug blocks (needed for DWT) */
+    CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
 
+    /* Reset and enable the cycle counter */
+    DWT->CYCCNT = 0;
+    DWT->CTRL  |= DWT_CTRL_CYCCNTENA_Msk;
+}
+
+/**
+ * @brief Run Task 3 benchmark with extended timing measurements
+ */
+void run_task3_benchmark(void)
+{
+    progress = 0;
+    
+    // Test all 5 image sizes from Practical 1B
+    for (unsigned i = 0; i < (sizeof(test_sizes) / sizeof(test_sizes[0])); i++)
+    {
+        current_max_iter = MAX_ITER;
+        uint16_t width = test_sizes[i][0];
+        uint16_t height = test_sizes[i][1];
+        uint32_t total_pixels = width * height;
+        
+        // Update current test info for debugger viewing
+        current_width = width;
+        current_height = height;
+        
+        // Progress indication
+        HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_4);
+        
+        // Reset and start measurements
+        DWT_CYCCNT = 0;  // Reset cycle counter
+        start_cycles = DWT->CYCCNT;
+        start_time = HAL_GetTick();
+        
+        // Execute Mandelbrot calculation
+        uint64_t checksum = calculate_mandelbrot_fixed_point_arithmetic(width, height, MAX_ITER);
+        
+        // Stop measurements
+        end_time = HAL_GetTick();
+        end_cycles = DWT->CYCCNT;
+        
+        // Calculate metrics
+        uint32_t exec_time_ms = end_time - start_time;
+        uint32_t cpu_cycles = end_cycles - start_cycles;
+        
+        // Calculate throughput (pixels per second)
+        float throughput = 0.0f;
+        if (exec_time_ms > 0) {
+            // Convert ms to seconds and calculate pixels/sec
+            throughput = (float)total_pixels / ((float)exec_time_ms / 1000.0f);
+        }
+        
+        // Store results
+        task3_results[i] = (Task3Result){
+            .width = width,
+            .height = height,
+            .exec_time_ms = exec_time_ms,
+            .cpu_cycles = cpu_cycles,
+            .throughput_pixels_per_sec = throughput,
+            .checksum = checksum,
+            .max_iter = MAX_ITER
+        };
+        
+        // Update current values for debugger viewing
+        current_checksum = checksum;
+        current_exec_time = exec_time_ms;
+        current_cycles = cpu_cycles;
+        current_throughput = throughput;
+        
+        // Brief pause between tests
+        HAL_Delay(100);
+    }
+    
+    // Turn off progress LEDs
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3 | GPIO_PIN_4, GPIO_PIN_RESET);
+}
 /* USER CODE END 4 */
 
 /**

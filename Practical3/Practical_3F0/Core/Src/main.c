@@ -33,6 +33,24 @@ typedef struct {
     uint16_t max_iter;
     uint64_t checksum;
 } Task2Result;
+
+typedef struct {
+    uint16_t width;
+    uint16_t height;
+    uint32_t exec_time_ms;
+    uint16_t max_iter;
+    uint64_t checksum;
+    float throughput_pixels_per_sec;
+    uint32_t cpu_cycles_est;
+} Task3Result;
+
+typedef struct {
+    uint16_t width;
+    uint16_t height;
+    uint32_t exec_time_ms;
+    uint64_t checksum;
+    uint8_t processed_in_parts; // 0 = single run, 1-255 = number of parts
+} Task4Result;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -66,6 +84,40 @@ volatile uint16_t current_max_iter = 0;
 volatile uint32_t progress = 0;
 volatile uint8_t task2_done = 0;
 
+volatile Task3Result task3_results[5];
+volatile uint16_t t3_current_w=0, t3_current_h=0;
+volatile uint32_t t3_exec_ms=0, t3_cycles_est=0;
+volatile float    t3_throughput=0.0f;
+
+static uint8_t task3_done = 0;
+
+// Task 4 variables
+static const uint16_t task4_sizes[][2] = {
+    {320, 240},   // QVGA
+    {640, 480},   // VGA
+    {800, 600},   // SVGA
+    {1024, 768},  // XGA
+    {1280, 720},  // HD
+    {1920, 1080}  // Full HD
+};
+
+static const uint8_t num_task4_tests = 6;
+volatile Task4Result task4_results[6];
+volatile uint8_t task4_done = 0;
+volatile uint16_t t4_current_w = 0, t4_current_h = 0;
+volatile uint32_t t4_exec_ms = 0;
+volatile uint8_t t4_parts = 0;
+
+// Task 4 variables
+static const uint16_t task4_sizes[][2] = {
+    {320, 240},   // QVGA
+    {640, 480},   // VGA
+    {800, 600},   // SVGA
+    {1024, 768},  // XGA
+    {1280, 720},  // HD
+    {1920, 1080}  // Full HD
+};
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -74,6 +126,8 @@ static void MX_GPIO_Init(void);
 /* USER CODE BEGIN PFP */
 //TODO: Define any function prototypes you might need such as the calculate Mandelbrot function among others
 uint64_t calculate_mandelbrot_fixed_point_arithmetic(int width, int height, int max_iterations);
+static uint64_t get_time_us(void);
+static void run_task3_benchmark_f0(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -124,7 +178,7 @@ int main(void)
     
 	  //TODO: Visual indicator: Turn on LED0 to signal processing start
 	  //TODO: Benchmark and Profile Performance
-    if(!task2_done){
+    if(task2_done){
       // Task 2: Test different MAX_ITER values
     HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2, GPIO_PIN_SET); // LED2 for Task 2
     
@@ -157,12 +211,24 @@ int main(void)
     
     task2_done = 1;
     }
-	  //TODO: Visual indicator: Turn on LED1 to signal processing start
-
-
-	  //TODO: Keep the LEDs ON for 2s
-
-	  // TODO: Turn OFF LEDs
+    else if (!task3_done) {
+      // LEDs to show start/finish
+      HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET); // LED0 on (start)
+      run_task3_benchmark_f0();
+      HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_SET); // LED1 on (done)
+      HAL_Delay(2000);
+      HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0|GPIO_PIN_1, GPIO_PIN_RESET);
+      task3_done = 1;
+}
+    else if (!task4_done) {
+    // Task 4: Scalability Test
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2, GPIO_PIN_SET); // LED2 for Task 4
+    run_task4_scalability_test();
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3, GPIO_PIN_SET); // LED3 for completion
+    HAL_Delay(2000);
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2 | GPIO_PIN_3, GPIO_PIN_RESET);
+    task4_done = 1;
+}
 
 
 
@@ -270,6 +336,120 @@ uint64_t calculate_mandelbrot_fixed_point_arithmetic(int width, int height, int 
     }
     return mandelbrot_sum;
 }
+
+// Combine HAL_GetTick() (ms) with SysTick->VAL for ~us resolution
+uint64_t get_time_us(void)
+{
+    uint32_t load = SysTick->LOAD + 1U;            // ticks per 1 ms
+    uint32_t tick1, val1, tick2, val2;
+
+    // read atomically
+    tick1 = HAL_GetTick();
+    val1  = SysTick->VAL;
+    tick2 = HAL_GetTick();
+    val2  = SysTick->VAL;
+
+    // if a millisecond rolled over between reads, use the second set
+    uint32_t ms;
+    uint32_t val;
+    if (tick2 != tick1) { ms = tick2; val = val2; }
+    else                { ms = tick1; val = val1; }
+
+    // SysTick counts DOWN from LOAD to 0 each ms
+    uint32_t sub_ms_ticks = load - val;            // ticks since last ms
+    uint64_t us = (uint64_t)ms * 1000ULL
+                + ((uint64_t)sub_ms_ticks * 1000ULL) / load;
+    return us;
+}
+
+
+void run_task3_benchmark_f0(void)
+{
+    for (int i=0; i<5; ++i) {
+        uint16_t w = test_sizes[i][0];
+        uint16_t h = test_sizes[i][1];
+        uint32_t pixels = (uint32_t)w * (uint32_t)h;
+
+        t3_current_w = w;
+        t3_current_h = h;
+        HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_4); // progress blip
+
+        uint64_t t0 = get_time_us();
+        uint64_t checksum = calculate_mandelbrot_fixed_point_arithmetic(w, h, MAX_ITER);
+        uint64_t t1 = get_time_us();
+
+        uint32_t elapsed_ms  = (uint32_t)((t1 - t0) / 1000ULL);
+        float    elapsed_s   = (float)(t1 - t0) / 1e6f;
+
+        float throughput = (elapsed_s > 0.0f) ? (pixels / elapsed_s) : 0.0f;
+        uint32_t cycles_est = (uint32_t)((t1 - t0) * (SystemCoreClock / 1000000UL));
+
+        task3_results[i] = (Task3Result){
+            .width=w, .height=h, .max_iter=MAX_ITER,
+            .exec_time_ms=elapsed_ms, .checksum=checksum,
+            .throughput_pixels_per_sec=throughput,
+            .cpu_cycles_est=cycles_est
+        };
+
+        t3_exec_ms     = elapsed_ms;
+        t3_throughput  = throughput;
+        t3_cycles_est  = cycles_est;
+
+        HAL_Delay(50);
+    }
+}
+
+void run_task4_scalability_test(void) {
+    for (int i = 0; i < num_task4_tests; ++i) {
+        uint16_t w = task4_sizes[i][0];
+        uint16_t h = task4_sizes[i][1];
+        uint32_t total_pixels = (uint32_t)w * (uint32_t)h;
+        
+        t4_current_w = w;
+        t4_current_h = h;
+        HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_5); // Progress indicator
+        
+        uint64_t checksum = 0;
+        uint32_t start_time = HAL_GetTick();
+        uint8_t parts_used = 1; // Default: process in one part
+        
+        // Check if we need to split due to memory constraints
+        // For STM32F0, we might need to split larger images
+        if (total_pixels > 50000) { // Arbitrary threshold for F0 memory
+            parts_used = 4; // Split into 4 parts
+            for (int part = 0; part < parts_used; part++) {
+                int start_y = (h * part) / parts_used;
+                int end_y = (h * (part + 1)) / parts_used;
+                
+                checksum += calculate_mandelbrot_fixed_point_arithmetic_partial(
+                    w, h, MAX_ITER, start_y, end_y);
+                
+                HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_6); // Part completion blip
+                HAL_Delay(10);
+            }
+        } else {
+            // Process in one go
+            checksum = calculate_mandelbrot_fixed_point_arithmetic(w, h, MAX_ITER);
+        }
+        
+        uint32_t end_time = HAL_GetTick();
+        uint32_t elapsed_ms = end_time - start_time;
+        
+        task4_results[i] = (Task4Result){
+            .width = w,
+            .height = h,
+            .exec_time_ms = elapsed_ms,
+            .checksum = checksum,
+            .processed_in_parts = parts_used
+        };
+        
+        t4_exec_ms = elapsed_ms;
+        t4_parts = parts_used;
+        
+        HAL_Delay(100); // Short delay between tests
+    }
+}
+
 /* USER CODE END 4 */
 
 /**
