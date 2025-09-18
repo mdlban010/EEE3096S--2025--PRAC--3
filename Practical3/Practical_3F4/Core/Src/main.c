@@ -166,6 +166,12 @@ void run_task5_fpu_test(void);
 uint64_t calculate_mandelbrot_float(int width, int height, int max_iterations);
 uint64_t calculate_mandelbrot_double_nofpu(int width, int height, int max_iterations);
 uint64_t calculate_mandelbrot_float_nofpu(int width, int height, int max_iterations);
+void enable_fpu(void);
+void disable_fpu(void);
+uint8_t is_fpu_enabled(void);
+void run_task5_fpu_test(void);
+uint64_t calculate_mandelbrot_float_fpu(int width, int height, int max_iterations);
+uint64_t calculate_mandelbrot_double_fpu(int width, int height, int max_iterations);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -316,7 +322,7 @@ int main(void)
         
         task3_done = 1;
     }
-    else if (!task4_done) {
+    else if (task4_done) {
     // Task 4: Scalability Test
     HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2, GPIO_PIN_SET); // LED2 for Task 4
     run_task4_scalability_test_f4();
@@ -324,6 +330,18 @@ int main(void)
     HAL_Delay(2000);
     HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2 | GPIO_PIN_3, GPIO_PIN_RESET);
     task4_done = 1;
+}
+    else if (!task5_done) {
+    // Task 5: FPU Impact Test (STM32F4 only)
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4, GPIO_PIN_SET); // LED4 for Task 5
+    
+    run_task5_fpu_test();
+    
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_SET); // LED5 for completion
+    HAL_Delay(2000);
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4 | GPIO_PIN_5, GPIO_PIN_RESET);
+    
+    task5_done = 1;
 }
     // heartbeat led to show program is alive
     HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_2);
@@ -610,6 +628,221 @@ uint64_t calculate_mandelbrot_float(int width, int height, int max_iterations) {
     }
     return mandelbrot_sum;
 }
+uint64_t calculate_mandelbrot_float_fpu(int width, int height, int max_iterations) {
+    uint64_t mandelbrot_sum = 0;
+    for (int y = 0; y < height; y++) {
+        // Progress indicator
+        if ((y & 15) == 0) {
+            HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_6);
+        }
+        
+        for(int x = 0; x < width; x++) {
+            float x0 = ((float)x/(float)width)*3.5f-2.5f;
+            float y0 = ((float)y/(float)height)*2.0f-1.0f;
+            float xi = 0.0f, yi = 0.0f;
+            int iterations = 0;
+
+            while(iterations < max_iterations && (xi * xi + yi * yi) <= 4.0f) {
+                float temp = xi * xi - yi * yi;
+                yi = 2.0f * xi * yi + y0;
+                xi = temp + x0;
+                iterations++;
+            }
+            mandelbrot_sum += iterations;
+        }
+    }
+    return mandelbrot_sum;
+}
+// Double implementation assuming FPU enabled
+uint64_t calculate_mandelbrot_double_fpu(int width, int height, int max_iterations) {
+    uint64_t mandelbrot_sum = 0;
+    for (int y = 0; y < height; y++) {
+        // Progress indicator
+        if ((y & 15) == 0) {
+            HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_6);
+        }
+        
+        for(int x = 0; x < width; x++) {
+            double x0 = ((double)x/(double)width)*3.5-2.5;
+            double y0 = ((double)y/(double)height)*2.0-1.0;
+            double xi = 0.0, yi = 0.0;
+            int iterations = 0;
+
+            while(iterations < max_iterations && (xi * xi + yi * yi) <= 4.0) {
+                double temp = xi * xi - yi * yi;
+                yi = 2.0 * xi * yi + y0;
+                xi = temp + x0;
+                iterations++;
+            }
+            mandelbrot_sum += iterations;
+        }
+    }
+    return mandelbrot_sum;
+}
+
+// FPU control functions
+void enable_fpu(void) {
+    // Enable CP10 and CP11 (FPU coprocessors)
+    SCB->CPACR |= ((3UL << 10*2)|(3UL << 11*2));
+    __DSB();
+    __ISB();
+}
+
+void disable_fpu(void) {
+    // Disable CP10 and CP11 (FPU coprocessors)
+    SCB->CPACR &= ~((3UL << 10*2)|(3UL << 11*2));
+    __DSB();
+    __ISB();
+}
+
+uint8_t is_fpu_enabled(void) {
+    return ((SCB->CPACR & ((3UL << 10*2)|(3UL << 11*2))) != 0) ? 1 : 0;
+}
+
+/**
+ * @brief Run Task 5 FPU impact test
+ * Tests float vs double with FPU enabled/disabled
+ */
+void run_task5_fpu_test(void) {
+    // Test on 256x256 image (largest from Practical 1B for clear timing differences)
+    uint16_t width = 256;
+    uint16_t height = 256;
+    uint32_t total_pixels = width * height;
+    
+    // Test case index
+    uint8_t test_idx = 0;
+    
+    // Test 1: Float with FPU enabled
+    enable_fpu();
+    t5_fpu_enabled = is_fpu_enabled();
+    t5_data_type = 0; // float
+    
+    DWT->CYCCNT = 0;
+    start_cycles = DWT->CYCCNT;
+    start_time = HAL_GetTick();
+    
+    uint64_t checksum_float_fpu = calculate_mandelbrot_float_fpu(width, height, MAX_ITER);
+    
+    end_time = HAL_GetTick();
+    end_cycles = DWT->CYCCNT;
+    
+    uint32_t exec_time_ms = end_time - start_time;
+    uint32_t cpu_cycles = end_cycles - start_cycles;
+    float throughput = (exec_time_ms > 0) ? ((float)total_pixels / ((float)exec_time_ms / 1000.0f)) : 0.0f;
+    
+    task5_results[test_idx++] = (Task5Result){
+        .width = width,
+        .height = height,
+        .exec_time_ms = exec_time_ms,
+        .cpu_cycles = cpu_cycles,
+        .throughput_pixels_per_sec = throughput,
+        .checksum = checksum_float_fpu,
+        .fpu_enabled = 1,
+        .data_type = 0 // float
+    };
+    
+    HAL_Delay(100);
+    
+    // Test 2: Float with FPU disabled
+    disable_fpu();
+    t5_fpu_enabled = is_fpu_enabled();
+    t5_data_type = 0; // float
+    
+    DWT->CYCCNT = 0;
+    start_cycles = DWT->CYCCNT;
+    start_time = HAL_GetTick();
+    
+    uint64_t checksum_float_nofpu = calculate_mandelbrot_float_fpu(width, height, MAX_ITER);
+    
+    end_time = HAL_GetTick();
+    end_cycles = DWT->CYCCNT;
+    
+    exec_time_ms = end_time - start_time;
+    cpu_cycles = end_cycles - start_cycles;
+    throughput = (exec_time_ms > 0) ? ((float)total_pixels / ((float)exec_time_ms / 1000.0f)) : 0.0f;
+    
+    task5_results[test_idx++] = (Task5Result){
+        .width = width,
+        .height = height,
+        .exec_time_ms = exec_time_ms,
+        .cpu_cycles = cpu_cycles,
+        .throughput_pixels_per_sec = throughput,
+        .checksum = checksum_float_nofpu,
+        .fpu_enabled = 0,
+        .data_type = 0 // float
+    };
+    
+    HAL_Delay(100);
+    
+    // Test 3: Double with FPU enabled
+    enable_fpu();
+    t5_fpu_enabled = is_fpu_enabled();
+    t5_data_type = 1; // double
+    
+    DWT->CYCCNT = 0;
+    start_cycles = DWT->CYCCNT;
+    start_time = HAL_GetTick();
+    
+    uint64_t checksum_double_fpu = calculate_mandelbrot_double_fpu(width, height, MAX_ITER);
+    
+    end_time = HAL_GetTick();
+    end_cycles = DWT->CYCCNT;
+    
+    exec_time_ms = end_time - start_time;
+    cpu_cycles = end_cycles - start_cycles;
+    throughput = (exec_time_ms > 0) ? ((float)total_pixels / ((float)exec_time_ms / 1000.0f)) : 0.0f;
+    
+    task5_results[test_idx++] = (Task5Result){
+        .width = width,
+        .height = height,
+        .exec_time_ms = exec_time_ms,
+        .cpu_cycles = cpu_cycles,
+        .throughput_pixels_per_sec = throughput,
+        .checksum = checksum_double_fpu,
+        .fpu_enabled = 1,
+        .data_type = 1 // double
+    };
+    
+    HAL_Delay(100);
+    
+    // Test 4: Double with FPU disabled
+    disable_fpu();
+    t5_fpu_enabled = is_fpu_enabled();
+    t5_data_type = 1; // double
+    
+    DWT->CYCCNT = 0;
+    start_cycles = DWT->CYCCNT;
+    start_time = HAL_GetTick();
+    
+    uint64_t checksum_double_nofpu = calculate_mandelbrot_double_fpu(width, height, MAX_ITER);
+    
+    end_time = HAL_GetTick();
+    end_cycles = DWT->CYCCNT;
+    
+    exec_time_ms = end_time - start_time;
+    cpu_cycles = end_cycles - start_cycles;
+    throughput = (exec_time_ms > 0) ? ((float)total_pixels / ((float)exec_time_ms / 1000.0f)) : 0.0f;
+    
+    task5_results[test_idx] = (Task5Result){
+        .width = width,
+        .height = height,
+        .exec_time_ms = exec_time_ms,
+        .cpu_cycles = cpu_cycles,
+        .throughput_pixels_per_sec = throughput,
+        .checksum = checksum_double_nofpu,
+        .fpu_enabled = 0,
+        .data_type = 1 // double
+    };
+    
+    // Re-enable FPU for normal operation
+    enable_fpu();
+    
+    // Update live variables with last test results for debugger
+    t5_exec_ms = exec_time_ms;
+    t5_cycles = cpu_cycles;
+    t5_throughput = throughput;
+}
+
 /* USER CODE END 4 */
 
 /**
