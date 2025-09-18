@@ -51,6 +51,14 @@ typedef struct {
     uint32_t cpu_cycles;
     float throughput_pixels_per_sec;
 } Task3Result;
+
+typedef struct {
+    uint16_t width;
+    uint16_t height;
+    uint32_t exec_time_ms;
+    uint64_t checksum;
+    uint8_t processed_in_parts; // 0 = single run, 1-255 = number of parts
+} Task4Result;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -109,6 +117,23 @@ volatile uint32_t current_exec_time = 0;
 volatile uint32_t progress = 0;
 static uint8_t task3_done = 0;
 
+
+// Task 4 variables
+static const uint16_t task4_sizes[][2] = {
+    {320, 240},   // QVGA
+    {640, 480},   // VGA
+    {800, 600},   // SVGA
+    {1024, 768},  // XGA
+    {1280, 720},  // HD
+    {1920, 1080}  // Full HD
+};
+static const uint8_t num_task4_tests = 6;
+
+volatile Task4Result task4_results[6];
+volatile uint8_t task4_done = 0;
+volatile uint16_t t4_current_w = 0, t4_current_h = 0;
+volatile uint32_t t4_exec_ms = 0;
+volatile uint8_t t4_parts = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -121,7 +146,9 @@ uint64_t calculate_mandelbrot_fixed_point_arithmetic(int width, int height, int 
 uint64_t calculate_mandelbrot_double(int width, int height, int max_iterations);
 void dwt_init(void);
 void run_task_3_benchmark(void);
-
+uint64_t calculate_mandelbrot_fixed_point_arithmetic_partial(int width, int height, int max_iterations, 
+                                                           int start_y, int end_y);
+static void run_task4_scalability_test(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -272,6 +299,15 @@ int main(void)
         
         task3_done = 1;
     }
+    else if (!task4_done) {
+    // Task 4: Scalability Test
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2, GPIO_PIN_SET); // LED2 for Task 4
+    run_task4_scalability_test();
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3, GPIO_PIN_SET); // LED3 for completion
+    HAL_Delay(2000);
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2 | GPIO_PIN_3, GPIO_PIN_RESET);
+    task4_done = 1;
+}
     // heartbeat led to show program is alive
     HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_2);
     HAL_Delay(1000);
@@ -489,6 +525,85 @@ void run_task3_benchmark(void)
     
     // Turn off progress LEDs
     HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3 | GPIO_PIN_4, GPIO_PIN_RESET);
+}
+
+// Function to calculate Mandelbrot for a partial image (for memory constraints)
+uint64_t calculate_mandelbrot_fixed_point_arithmetic_partial(int width, int height, int max_iterations, 
+                                                           int start_y, int end_y) {
+    uint64_t mandelbrot_sum = 0;
+    for (int y = start_y; y < end_y; y++) {
+        for(int x = 0; x < width; x++) {
+            int32_t x0 = ((int64_t)x * 3500000) / width - 2500000;
+            int32_t y0 = ((int64_t)y * 2000000) / height - 1000000;
+
+            int32_t xi = 0, yi = 0;
+            int iterations = 0;
+
+            while(iterations < max_iterations) {
+                int64_t xi2 = ((int64_t)xi * xi) / SCALE;
+                int64_t yi2 = ((int64_t)yi * yi) / SCALE;
+
+                if(xi2 + yi2 > 4000000) break;
+                int32_t temp = xi2 - yi2;
+                yi = (2 * (int64_t)xi * yi) / SCALE + y0;
+                xi = temp + x0;
+                iterations++;
+            }
+            mandelbrot_sum += iterations;
+        }
+    }
+    return mandelbrot_sum;
+}
+
+// task 4 method for scalability
+void run_task4_scalability_test(void) {
+    for (int i = 0; i < num_task4_tests; ++i) {
+        uint16_t w = task4_sizes[i][0];
+        uint16_t h = task4_sizes[i][1];
+        uint32_t total_pixels = (uint32_t)w * (uint32_t)h;
+        
+        t4_current_w = w;
+        t4_current_h = h;
+        HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_5); // Progress indicator
+        
+        uint64_t checksum = 0;
+        uint32_t start_time = HAL_GetTick();
+        uint8_t parts_used = 1; // Default: process in one part
+        
+        // Check if we need to split due to memory constraints
+        if (total_pixels > 50000) { // Arbitrary threshold for F0 memory
+            parts_used = 4; // Split into 4 parts
+            for (int part = 0; part < parts_used; part++) {
+                int start_y = (h * part) / parts_used;
+                int end_y = (h * (part + 1)) / parts_used;
+                
+                checksum += calculate_mandelbrot_fixed_point_arithmetic_partial(
+                    w, h, MAX_ITER, start_y, end_y);
+                
+                HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_6); // Part completion blip
+                HAL_Delay(10);
+            }
+        } else {
+            // Process in one go
+            checksum = calculate_mandelbrot_fixed_point_arithmetic(w, h, MAX_ITER);
+        }
+        
+        uint32_t end_time = HAL_GetTick();
+        uint32_t elapsed_ms = end_time - start_time;
+        
+        task4_results[i] = (Task4Result){
+            .width = w,
+            .height = h,
+            .exec_time_ms = elapsed_ms,
+            .checksum = checksum,
+            .processed_in_parts = parts_used
+        };
+        
+        t4_exec_ms = elapsed_ms;
+        t4_parts = parts_used;
+        
+        HAL_Delay(100); // Short delay between tests
+    }
 }
 /* USER CODE END 4 */
 
