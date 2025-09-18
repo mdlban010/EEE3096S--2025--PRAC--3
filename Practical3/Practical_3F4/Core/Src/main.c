@@ -141,7 +141,7 @@ uint64_t calculate_mandelbrot_fixed_point_arithmetic(int width, int height, int 
 uint64_t calculate_mandelbrot_double(int width, int height, int max_iterations);
 void dwt_init(void);
 void run_task_3_benchmark(void);
-static void run_task4_scalability_test(void);
+static void run_task4_scalability_test_f4(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -274,7 +274,7 @@ int main(void)
     task2_done = 1;
     }
 
-    else if (!task3_done) {
+    else if (task3_done) {
         // Visual indicator: Turn on LED0 to signal Task 3 start
         HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);
         
