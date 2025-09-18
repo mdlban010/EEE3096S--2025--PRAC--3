@@ -59,6 +59,17 @@ typedef struct {
     uint64_t checksum;
     uint8_t processed_in_parts; // 0 = single run, 1-255 = number of parts
 } Task4Result;
+
+typedef struct {
+    uint16_t width;
+    uint16_t height;
+    uint32_t exec_time_ms;
+    uint64_t checksum;
+    uint32_t cpu_cycles;
+    float throughput_pixels_per_sec;
+    uint8_t fpu_enabled; // 0=disabled, 1=enabled
+    uint8_t data_type;   // 0=float, 1=double
+} Task5Result;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -129,6 +140,15 @@ volatile uint8_t task4_done = 0;
 volatile uint16_t t4_current_w = 0, t4_current_h = 0;
 volatile uint32_t t4_exec_ms = 0;
 volatile uint8_t t4_parts = 0;
+
+// Task 5 variables
+volatile Task5Result task5_results[4]; // 4 test cases: float+FPU, float+noFPU, double+FPU, double+noFPU
+volatile uint8_t task5_done = 0;
+volatile uint32_t t5_exec_ms = 0;
+volatile uint32_t t5_cycles = 0;
+volatile float t5_throughput = 0;
+volatile uint8_t t5_fpu_enabled = 0;
+volatile uint8_t t5_data_type = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -140,8 +160,12 @@ static void MX_GPIO_Init(void);
 uint64_t calculate_mandelbrot_fixed_point_arithmetic(int width, int height, int max_iterations);
 uint64_t calculate_mandelbrot_double(int width, int height, int max_iterations);
 void dwt_init(void);
-void run_task_3_benchmark(void);
-static void run_task4_scalability_test_f4(void);
+void run_task3_benchmark(void);
+void run_task4_scalability_test_f4(void);
+void run_task5_fpu_test(void);
+uint64_t calculate_mandelbrot_float(int width, int height, int max_iterations);
+uint64_t calculate_mandelbrot_double_nofpu(int width, int height, int max_iterations);
+uint64_t calculate_mandelbrot_float_nofpu(int width, int height, int max_iterations);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -295,7 +319,7 @@ int main(void)
     else if (!task4_done) {
     // Task 4: Scalability Test
     HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2, GPIO_PIN_SET); // LED2 for Task 4
-    run_task4_scalability_test();
+    run_task4_scalability_test_f4();
     HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3, GPIO_PIN_SET); // LED3 for completion
     HAL_Delay(2000);
     HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2 | GPIO_PIN_3, GPIO_PIN_RESET);
@@ -473,7 +497,7 @@ void run_task3_benchmark(void)
         HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_4);
         
         // Reset and start measurements
-        DWT_CYCCNT = 0;  // Reset cycle counter
+        DWT->CYCCNT = 0;  // Reset cycle counter
         start_cycles = DWT->CYCCNT;
         start_time = HAL_GetTick();
         
@@ -564,6 +588,27 @@ void run_task4_scalability_test_f4(void) {
         
         HAL_Delay(50); // Short delay between tests
     }
+}
+// Mandelbrot implementation using float (with FPU)
+uint64_t calculate_mandelbrot_float(int width, int height, int max_iterations) {
+    uint64_t mandelbrot_sum = 0;
+    for (int y = 0; y < height; y++) {
+        for(int x = 0; x < width; x++) {
+            float x0 = ((float)x/width)*3.5f-2.5f;
+            float y0 = ((float)y/height)*2.0f-1.0f;
+            float xi = 0.0f, yi = 0.0f;
+            int iterations = 0;
+
+            while(iterations < max_iterations && (xi * xi + yi * yi) <= 4.0f) {
+                float temp = xi * xi - yi * yi;
+                yi = 2.0f * xi * yi + y0;
+                xi = temp + x0;
+                iterations++;
+            }
+            mandelbrot_sum += iterations;
+        }
+    }
+    return mandelbrot_sum;
 }
 /* USER CODE END 4 */
 
