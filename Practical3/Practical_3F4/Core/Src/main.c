@@ -146,8 +146,6 @@ uint64_t calculate_mandelbrot_fixed_point_arithmetic(int width, int height, int 
 uint64_t calculate_mandelbrot_double(int width, int height, int max_iterations);
 void dwt_init(void);
 void run_task_3_benchmark(void);
-uint64_t calculate_mandelbrot_fixed_point_arithmetic_partial(int width, int height, int max_iterations, 
-                                                           int start_y, int end_y);
 static void run_task4_scalability_test(void);
 /* USER CODE END PFP */
 
@@ -527,36 +525,8 @@ void run_task3_benchmark(void)
     HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3 | GPIO_PIN_4, GPIO_PIN_RESET);
 }
 
-// Function to calculate Mandelbrot for a partial image (for memory constraints)
-uint64_t calculate_mandelbrot_fixed_point_arithmetic_partial(int width, int height, int max_iterations, 
-                                                           int start_y, int end_y) {
-    uint64_t mandelbrot_sum = 0;
-    for (int y = start_y; y < end_y; y++) {
-        for(int x = 0; x < width; x++) {
-            int32_t x0 = ((int64_t)x * 3500000) / width - 2500000;
-            int32_t y0 = ((int64_t)y * 2000000) / height - 1000000;
-
-            int32_t xi = 0, yi = 0;
-            int iterations = 0;
-
-            while(iterations < max_iterations) {
-                int64_t xi2 = ((int64_t)xi * xi) / SCALE;
-                int64_t yi2 = ((int64_t)yi * yi) / SCALE;
-
-                if(xi2 + yi2 > 4000000) break;
-                int32_t temp = xi2 - yi2;
-                yi = (2 * (int64_t)xi * yi) / SCALE + y0;
-                xi = temp + x0;
-                iterations++;
-            }
-            mandelbrot_sum += iterations;
-        }
-    }
-    return mandelbrot_sum;
-}
-
 // task 4 method for scalability
-void run_task4_scalability_test(void) {
+void run_task4_scalability_test_f4(void) {
     for (int i = 0; i < num_task4_tests; ++i) {
         uint16_t w = task4_sizes[i][0];
         uint16_t h = task4_sizes[i][1];
@@ -568,23 +538,18 @@ void run_task4_scalability_test(void) {
         
         uint64_t checksum = 0;
         uint32_t start_time = HAL_GetTick();
-        uint8_t parts_used = 1; // Default: process in one part
+        uint8_t parts_used = 1;
         
-        // Check if we need to split due to memory constraints
-        if (total_pixels > 50000) { // Arbitrary threshold for F0 memory
-            parts_used = 4; // Split into 4 parts
-            for (int part = 0; part < parts_used; part++) {
-                int start_y = (h * part) / parts_used;
-                int end_y = (h * (part + 1)) / parts_used;
-                
-                checksum += calculate_mandelbrot_fixed_point_arithmetic_partial(
-                    w, h, MAX_ITER, start_y, end_y);
-                
-                HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_6); // Part completion blip
-                HAL_Delay(10);
-            }
+        // STM32F4 has more memory, so we handle larger images
+        // But for very large images (2K+), we might need to split
+        if (total_pixels > 2000000) { // 2MPixels threshold for F4
+            parts_used = 2;
+            // Split into two halves
+            int mid_point = h / 2;
+            checksum += calculate_mandelbrot_fixed_point_arithmetic(w, mid_point, MAX_ITER);
+            checksum += calculate_mandelbrot_fixed_point_arithmetic(w, h - mid_point, MAX_ITER);
         } else {
-            // Process in one go
+            // Process in one go - F4 can handle most sizes
             checksum = calculate_mandelbrot_fixed_point_arithmetic(w, h, MAX_ITER);
         }
         
@@ -602,7 +567,7 @@ void run_task4_scalability_test(void) {
         t4_exec_ms = elapsed_ms;
         t4_parts = parts_used;
         
-        HAL_Delay(100); // Short delay between tests
+        HAL_Delay(50); // Short delay between tests
     }
 }
 /* USER CODE END 4 */
