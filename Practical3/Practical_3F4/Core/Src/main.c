@@ -67,11 +67,6 @@ typedef struct {
 #define SCALE      1000000
 #define CPU_FREQ   120000000 // STM32F4 at 120MHz
 
-// DWT (Data Watchpoint and Trace) register definitions for cycle counter
-#define DWT_CTRL    (*(volatile uint32_t*)0xE0001000)
-#define DWT_CYCCNT  (*(volatile uint32_t*)0xE0001004)
-#define DWT_CTRL_CYCCNTENA_Msk (0x1UL)
-
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
