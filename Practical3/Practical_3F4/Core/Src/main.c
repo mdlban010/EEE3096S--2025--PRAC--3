@@ -24,6 +24,8 @@
 #include <stdint.h>
 #include <math.h>
 #include "core_cm4.h"
+#include <stdio.h>
+#include <inttypes.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -67,8 +69,8 @@ typedef struct {
     uint64_t checksum;
     uint32_t cpu_cycles;
     float throughput_pixels_per_sec;
-    uint8_t fpu_enabled; // 0=disabled, 1=enabled
-    uint8_t data_type;   // 0=float, 1=double
+    uint8_t fpu_enabled;
+    uint8_t data_type;
 } Task5Result;
 /* USER CODE END PTD */
 
@@ -78,6 +80,22 @@ typedef struct {
 #define SCALE      1000000
 #define CPU_FREQ   120000000 // STM32F4 at 120MHz
 
+#ifndef FPU_BUILD
+// Will be defined by Makefile targets: -DFPU_BUILD=1 (fpu_on) or 0 (fpu_off)
+#define FPU_BUILD 0
+#endif
+
+#ifdef __GNUC__
+#define PUTCHAR_PROTOTYPE int __io_putchar(int ch)
+#else
+#define PUTCHAR_PROTOTYPE int fputc(int ch, FILE *f)
+#endif
+
+PUTCHAR_PROTOTYPE {
+    // Stub implementation - replace with UART code if needed
+    return ch;
+}
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -86,10 +104,11 @@ typedef struct {
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
-
+// UART_HandleTypeDef huart2;
 /* USER CODE BEGIN PV */
 static const uint16_t max_iter_values[] = {100, 250, 500, 750, 1000};
 static const uint8_t num_max_iter_tests = 5;
+
 // Performance timing variables
 static const uint16_t test_sizes[][2] = {
     {128, 128}, {160, 160}, {192, 192}, {224, 224}, {256, 256}
@@ -121,8 +140,6 @@ volatile uint32_t current_exec_time = 0;
 
 // Progress: 0..9 (5 sizes × 2 kernels)
 volatile uint32_t progress = 0;
-static uint8_t task3_done = 0;
-
 
 // Task 4 variables
 static const uint16_t task4_sizes[][2] = {
@@ -136,19 +153,25 @@ static const uint16_t task4_sizes[][2] = {
 static const uint8_t num_task4_tests = 6;
 
 volatile Task4Result task4_results[6];
-volatile uint8_t task4_done = 0;
 volatile uint16_t t4_current_w = 0, t4_current_h = 0;
 volatile uint32_t t4_exec_ms = 0;
 volatile uint8_t t4_parts = 0;
 
 // Task 5 variables
-volatile Task5Result task5_results[4]; // 4 test cases: float+FPU, float+noFPU, double+FPU, double+noFPU
+volatile Task5Result task5_results[5][2];
 volatile uint8_t task5_done = 0;
+
 volatile uint32_t t5_exec_ms = 0;
 volatile uint32_t t5_cycles = 0;
-volatile float t5_throughput = 0;
-volatile uint8_t t5_fpu_enabled = 0;
-volatile uint8_t t5_data_type = 0;
+volatile float    t5_throughput = 0.0f;
+volatile uint8_t  t5_fpu_enabled = 0;  // build-time status copied during run
+volatile uint8_t  t5_data_type = 0;    // 0 float, 1 double
+
+// Task 6 variables (Live Expressions)
+volatile uint8_t  task6_done = 0;
+volatile uint32_t t6_total_ms = 0;
+volatile uint32_t t6_total_cycles = 0;
+volatile uint32_t t6_total_pixels = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -162,16 +185,29 @@ uint64_t calculate_mandelbrot_double(int width, int height, int max_iterations);
 void dwt_init(void);
 void run_task3_benchmark(void);
 void run_task4_scalability_test_f4(void);
-void run_task5_fpu_test(void);
+
+//// TASK -5
+//void run_task5_fpu_test(void);
+//uint64_t calculate_mandelbrot_float(int width, int height, int max_iterations);
+//uint64_t calculate_mandelbrot_double_nofpu(int width, int height, int max_iterations);
+//uint64_t calculate_mandelbrot_float_nofpu(int width, int height, int max_iterations);
+//void enable_fpu(void);
+//void disable_fpu(void);
+//uint8_t is_fpu_enabled(void);
+//void run_task5_fpu_test(void);
+//uint64_t calculate_mandelbrot_float_fpu(int width, int height, int max_iterations);
+//uint64_t calculate_mandelbrot_double_fpu(int width, int height, int max_iterations);
+//static inline uint32_t cycles_delta(uint32_t start, uint32_t end);
 uint64_t calculate_mandelbrot_float(int width, int height, int max_iterations);
-uint64_t calculate_mandelbrot_double_nofpu(int width, int height, int max_iterations);
-uint64_t calculate_mandelbrot_float_nofpu(int width, int height, int max_iterations);
+uint64_t calculate_mandelbrot_double(int width, int height, int max_iterations);
 void enable_fpu(void);
 void disable_fpu(void);
 uint8_t is_fpu_enabled(void);
 void run_task5_fpu_test(void);
-uint64_t calculate_mandelbrot_float_fpu(int width, int height, int max_iterations);
-uint64_t calculate_mandelbrot_double_fpu(int width, int height, int max_iterations);
+
+static inline uint32_t cycles_delta(uint32_t start, uint32_t end);
+void run_task6_total_runtime(void);
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -218,9 +254,11 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    static uint8_t task1_done = 0;
-    static uint8_t task2_done = 0;
-    if (task1_done){
+	  static uint8_t task1_done = 1;
+	  static uint8_t task2_done = 1;
+	  static uint8_t task3_done = 1;
+	  static uint8_t task4_done = 1;
+    if (!task1_done){
       // Visual indicator: Turn on LED0 to signal processing start
       HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);
 
@@ -269,7 +307,7 @@ int main(void)
       task1_done = 1;
     }
 
-    else if(task2_done){
+    else if(!task2_done){
       // Task 2: Test different MAX_ITER values
     HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2, GPIO_PIN_SET); // LED2 for Task 2
     
@@ -304,7 +342,7 @@ int main(void)
     task2_done = 1;
     }
 
-    else if (task3_done) {
+    else if (!task3_done) {
         // Visual indicator: Turn on LED0 to signal Task 3 start
         HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);
         
@@ -322,7 +360,7 @@ int main(void)
         
         task3_done = 1;
     }
-    else if (task4_done) {
+    else if (!task4_done) {
     // Task 4: Scalability Test
     HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2, GPIO_PIN_SET); // LED2 for Task 4
     run_task4_scalability_test_f4();
@@ -331,22 +369,29 @@ int main(void)
     HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2 | GPIO_PIN_3, GPIO_PIN_RESET);
     task4_done = 1;
 }
-    else if (!task5_done) {
-    // Task 5: FPU Impact Test (STM32F4 only)
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4, GPIO_PIN_SET); // LED4 for Task 5
-    
-    run_task5_fpu_test();
-    
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_SET); // LED5 for completion
-    HAL_Delay(2000);
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4 | GPIO_PIN_5, GPIO_PIN_RESET);
-    
-    task5_done = 1;
-}
+    else if (task5_done) {
+        // Task 5: FPU Impact Test (STM32F4 only)
+        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4, GPIO_PIN_SET);
+        printf("\r\n=== Task 5: FPU Impact Test ===\r\n");
+        
+        run_task5_fpu_test();
+        
+        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_SET);
+        printf("=== Task 5 Complete ===\r\n");
+        HAL_Delay(2000);
+        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4 | GPIO_PIN_5, GPIO_PIN_RESET);
+        task5_done = 1;
+    }
     // heartbeat led to show program is alive
     HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_2);
     HAL_Delay(1000);
   }
+  else if (!task6_done) {
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_SET);   // start LED
+    run_task6_total_runtime();
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_RESET); // end LED
+}
+
   /* USER CODE END 3 */
 }
 
@@ -699,148 +744,137 @@ uint8_t is_fpu_enabled(void) {
     return ((SCB->CPACR & ((3UL << 10*2)|(3UL << 11*2))) != 0) ? 1 : 0;
 }
 
+
 /**
  * @brief Run Task 5 FPU impact test
- * Tests float vs double with FPU enabled/disabled
+ * Tests all 4 combinations: float/double with FPU enabled/disabled
  */
-void run_task5_fpu_test(void) {
-    // Test on 256x256 image (largest from Practical 1B for clear timing differences)
-    uint16_t width = 256;
-    uint16_t height = 256;
-    uint32_t total_pixels = width * height;
-    
-    // Test case index
-    uint8_t test_idx = 0;
-    
-    // Test 1: Float with FPU enabled
-    enable_fpu();
-    t5_fpu_enabled = is_fpu_enabled();
-    t5_data_type = 0; // float
-    
-    DWT->CYCCNT = 0;
-    start_cycles = DWT->CYCCNT;
-    start_time = HAL_GetTick();
-    
-    uint64_t checksum_float_fpu = calculate_mandelbrot_float_fpu(width, height, MAX_ITER);
-    
-    end_time = HAL_GetTick();
-    end_cycles = DWT->CYCCNT;
-    
-    uint32_t exec_time_ms = end_time - start_time;
-    uint32_t cpu_cycles = end_cycles - start_cycles;
-    float throughput = (exec_time_ms > 0) ? ((float)total_pixels / ((float)exec_time_ms / 1000.0f)) : 0.0f;
-    
-    task5_results[test_idx++] = (Task5Result){
-        .width = width,
-        .height = height,
-        .exec_time_ms = exec_time_ms,
-        .cpu_cycles = cpu_cycles,
-        .throughput_pixels_per_sec = throughput,
-        .checksum = checksum_float_fpu,
-        .fpu_enabled = 1,
-        .data_type = 0 // float
+void run_task5_fpu_test(void)
+{
+    dwt_init();
+
+    t5_fpu_enabled = (FPU_BUILD ? 1 : 0); // reflect build-time FPU state in live expressions
+
+    const uint16_t sizes[5][2] = {
+        {128,128}, {160,160}, {192,192}, {224,224}, {256,256}
     };
-    
-    HAL_Delay(100);
-    
-    // Test 2: Float with FPU disabled
-    disable_fpu();
-    t5_fpu_enabled = is_fpu_enabled();
-    t5_data_type = 0; // float
-    
+
+    for (int size_idx = 0; size_idx < 5; ++size_idx) {
+        uint16_t w = sizes[size_idx][0];
+        uint16_t h = sizes[size_idx][1];
+        uint32_t total_pixels = (uint32_t)w * (uint32_t)h;
+
+        // --- FLOAT run ---
+        HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_6);
+        DWT->CYCCNT = 0;
+        uint32_t c0 = DWT->CYCCNT;
+        uint32_t t0 = HAL_GetTick();
+
+        uint64_t chk_f = calculate_mandelbrot_float(w, h, MAX_ITER);
+
+        uint32_t t1 = HAL_GetTick();
+        uint32_t c1 = DWT->CYCCNT;
+
+        uint32_t ms_f = t1 - t0;
+        uint32_t cyc_f = c1 - c0;
+        float thr_f = (ms_f > 0) ? ((float)total_pixels / ((float)ms_f / 1000.0f)) : 0.0f;
+
+        task5_results[size_idx][0] = (Task5Result){
+            .width = w, .height = h,
+            .exec_time_ms = ms_f,
+            .checksum = chk_f,
+            .cpu_cycles = cyc_f,
+            .throughput_pixels_per_sec = thr_f,
+            .fpu_enabled = t5_fpu_enabled,
+            .data_type = 0  // float
+        };
+
+        t5_exec_ms = ms_f;
+        t5_cycles = cyc_f;
+        t5_throughput = thr_f;
+        t5_data_type = 0;
+
+        HAL_Delay(30);
+
+        // --- DOUBLE run ---
+        HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_6);
+        DWT->CYCCNT = 0;
+        c0 = DWT->CYCCNT;
+        t0 = HAL_GetTick();
+
+        uint64_t chk_d = calculate_mandelbrot_double(w, h, MAX_ITER);
+
+        t1 = HAL_GetTick();
+        c1 = DWT->CYCCNT;
+
+        uint32_t ms_d = t1 - t0;
+        uint32_t cyc_d = c1 - c0;
+        float thr_d = (ms_d > 0) ? ((float)total_pixels / ((float)ms_d / 1000.0f)) : 0.0f;
+
+        task5_results[size_idx][1] = (Task5Result){
+            .width = w, .height = h,
+            .exec_time_ms = ms_d,
+            .checksum = chk_d,
+            .cpu_cycles = cyc_d,
+            .throughput_pixels_per_sec = thr_d,
+            .fpu_enabled = t5_fpu_enabled,
+            .data_type = 1  // double
+        };
+
+        t5_exec_ms = ms_d;
+        t5_cycles = cyc_d;
+        t5_throughput = thr_d;
+        t5_data_type = 1;
+
+        HAL_Delay(50);
+    }
+
+    task5_done = 1;
+}
+
+
+// Return cycles elapsed between two reads (handles 32-bit wrap naturally)
+static inline uint32_t cycles_delta(uint32_t start, uint32_t end) {
+    return (uint32_t)(end - start);
+}
+
+void run_task6_total_runtime(void)
+{
+    // Ensure DWT is ready
+    dwt_init();
+
+    // Use the same sizes as Practical 1B (you already have test_sizes[])
+    uint32_t pixels_sum = 0;
+    uint64_t checksum_sum = 0; // optional: lets you sanity-check results
+
+    // Start “whole program” timing
     DWT->CYCCNT = 0;
-    start_cycles = DWT->CYCCNT;
-    start_time = HAL_GetTick();
-    
-    uint64_t checksum_float_nofpu = calculate_mandelbrot_float_fpu(width, height, MAX_ITER);
-    
-    end_time = HAL_GetTick();
-    end_cycles = DWT->CYCCNT;
-    
-    exec_time_ms = end_time - start_time;
-    cpu_cycles = end_cycles - start_cycles;
-    throughput = (exec_time_ms > 0) ? ((float)total_pixels / ((float)exec_time_ms / 1000.0f)) : 0.0f;
-    
-    task5_results[test_idx++] = (Task5Result){
-        .width = width,
-        .height = height,
-        .exec_time_ms = exec_time_ms,
-        .cpu_cycles = cpu_cycles,
-        .throughput_pixels_per_sec = throughput,
-        .checksum = checksum_float_nofpu,
-        .fpu_enabled = 0,
-        .data_type = 0 // float
-    };
-    
-    HAL_Delay(100);
-    
-    // Test 3: Double with FPU enabled
-    enable_fpu();
-    t5_fpu_enabled = is_fpu_enabled();
-    t5_data_type = 1; // double
-    
-    DWT->CYCCNT = 0;
-    start_cycles = DWT->CYCCNT;
-    start_time = HAL_GetTick();
-    
-    uint64_t checksum_double_fpu = calculate_mandelbrot_double_fpu(width, height, MAX_ITER);
-    
-    end_time = HAL_GetTick();
-    end_cycles = DWT->CYCCNT;
-    
-    exec_time_ms = end_time - start_time;
-    cpu_cycles = end_cycles - start_cycles;
-    throughput = (exec_time_ms > 0) ? ((float)total_pixels / ((float)exec_time_ms / 1000.0f)) : 0.0f;
-    
-    task5_results[test_idx++] = (Task5Result){
-        .width = width,
-        .height = height,
-        .exec_time_ms = exec_time_ms,
-        .cpu_cycles = cpu_cycles,
-        .throughput_pixels_per_sec = throughput,
-        .checksum = checksum_double_fpu,
-        .fpu_enabled = 1,
-        .data_type = 1 // double
-    };
-    
-    HAL_Delay(100);
-    
-    // Test 4: Double with FPU disabled
-    disable_fpu();
-    t5_fpu_enabled = is_fpu_enabled();
-    t5_data_type = 1; // double
-    
-    DWT->CYCCNT = 0;
-    start_cycles = DWT->CYCCNT;
-    start_time = HAL_GetTick();
-    
-    uint64_t checksum_double_nofpu = calculate_mandelbrot_double_fpu(width, height, MAX_ITER);
-    
-    end_time = HAL_GetTick();
-    end_cycles = DWT->CYCCNT;
-    
-    exec_time_ms = end_time - start_time;
-    cpu_cycles = end_cycles - start_cycles;
-    throughput = (exec_time_ms > 0) ? ((float)total_pixels / ((float)exec_time_ms / 1000.0f)) : 0.0f;
-    
-    task5_results[test_idx] = (Task5Result){
-        .width = width,
-        .height = height,
-        .exec_time_ms = exec_time_ms,
-        .cpu_cycles = cpu_cycles,
-        .throughput_pixels_per_sec = throughput,
-        .checksum = checksum_double_nofpu,
-        .fpu_enabled = 0,
-        .data_type = 1 // double
-    };
-    
-    // Re-enable FPU for normal operation
-    enable_fpu();
-    
-    // Update live variables with last test results for debugger
-    t5_exec_ms = exec_time_ms;
-    t5_cycles = cpu_cycles;
-    t5_throughput = throughput;
+    uint32_t c0 = DWT->CYCCNT;
+    uint32_t t0 = HAL_GetTick();
+
+    for (unsigned i = 0; i < (sizeof(test_sizes)/sizeof(test_sizes[0])); ++i) {
+        uint16_t w = test_sizes[i][0];
+        uint16_t h = test_sizes[i][1];
+        pixels_sum += (uint32_t)w * (uint32_t)h;
+
+        // Use one consistent kernel (fixed-point is fine) and MAX_ITER=100
+        uint64_t chk = calculate_mandelbrot_fixed_point_arithmetic(w, h, MAX_ITER);
+        checksum_sum += chk;
+
+        HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_6); // progress blink
+    }
+
+    uint32_t t1 = HAL_GetTick();
+    uint32_t c1 = DWT->CYCCNT;
+
+    t6_total_ms     = t1 - t0;
+    t6_total_cycles = c1 - c0;
+    t6_total_pixels = pixels_sum;
+
+    // optional: you can also compute overall throughput if you want to watch it
+    // float t6_throughput = (t6_total_ms>0) ? (float)pixels_sum / (t6_total_ms/1000.0f) : 0.0f;
+
+    task6_done = 1;
 }
 
 /* USER CODE END 4 */

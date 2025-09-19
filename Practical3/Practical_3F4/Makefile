@@ -94,16 +94,46 @@ BIN = $(CP) -O binary -S
 #######################################
 # cpu
 CPU = -mcpu=cortex-m4
-
+CFLAGS += -DFPU_BUILD=1
 #TODO: FPU Enbale/Disable
 # fpu
-FPU = -mfpu=fpv4-sp-d16
+FPU := -mfpu=fpv4-sp-d16
 
 # float-abi
-FLOAT-ABI = -mfloat-abi=hard
+FLOAT-ABI := -mfloat-abi=hard
 
 # mcu
 MCU = $(CPU) -mthumb $(FPU) $(FLOAT-ABI)
+
+# --- Convenience targets for Task 5 ------------------------
+.PHONY: fpu_on fpu_off
+.PHONY: O0 O1 O2 O3 Os
+
+O0: override OPT := -O0
+O0: clean all
+
+O1: override OPT := -O1
+O1: clean all
+
+O2: override OPT := -O2
+O2: clean all
+
+O3: override OPT := -O3
+O3: clean all
+
+Os: override OPT := -Os
+Os: clean all
+
+# FPU ON (hardware FP; hard-float ABI)
+fpu_on: CFLAGS += -DFPU_BUILD=1
+fpu_on: clean all
+
+# FPU OFF (software FP; soft ABI)
+# NOTE: no -mfpu and use -mfloat-abi=soft
+fpu_off: override FPU :=
+fpu_off: override FLOAT-ABI := -mfloat-abi=soft
+fpu_off: CFLAGS += -DFPU_BUILD=0
+fpu_off: clean all
 
 # macros for gcc
 # AS defines
