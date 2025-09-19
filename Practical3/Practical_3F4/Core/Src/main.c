@@ -204,6 +204,14 @@ volatile uint64_t t7_checksum_fixed   = 0;
 volatile uint64_t t7_checksum_double  = 0;
 volatile uint64_t t7_abs_diff         = 0;
 volatile uint32_t t7_overflow_count   = 0;
+
+// ===== Task 8: Power Measurement Attempt =====
+volatile uint8_t  task8_done      = 0;
+volatile uint16_t t8_width        = 0;
+volatile uint16_t t8_height       = 0;
+volatile uint32_t t8_ms_active    = 0;   // compute window duration (ms)
+volatile uint64_t t8_checksum     = 0;   // checksum of the active test
+volatile uint32_t t8_ms_idle_mark = 2000; // ms the board idles for baseline measurement
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -222,6 +230,8 @@ uint64_t calculate_mandelbrot_fixed_scaled(int width, int height, int max_iterat
                                            int32_t scale, uint32_t *overflow_ctr);
 void run_task7_fixed_scale_sweep(void);
 
+//TASK8
+void run_task8_power_window_test(void);
 
 //// TASK -5
 //void run_task5_fpu_test(void);
@@ -432,7 +442,7 @@ int main(void)
         HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4 | GPIO_PIN_5, GPIO_PIN_RESET);
         task6_done = 1;
 }
-    else if (!task7_done) {
+    else if (task7_done) {
         // Start marker
         HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4, GPIO_PIN_SET);
 
@@ -443,6 +453,18 @@ int main(void)
         HAL_Delay(500);
         HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4 | GPIO_PIN_5, GPIO_PIN_RESET);
     }
+
+    else if (!task8_done) {
+    // Light a "start" LED if you like
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4, GPIO_PIN_SET);
+
+    run_task8_power_window_test();
+
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_SET);
+    HAL_Delay(300);
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4 | GPIO_PIN_5, GPIO_PIN_RESET);
+}
+
 
     // heartbeat led to show program is alive
     HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_2);
@@ -1080,6 +1102,42 @@ void run_task7_fixed_scale_sweep(void)
     }
 
     task7_done = 1;
+}
+
+// Choose a free pin you can probe easily; PB7 is already configured as output in your MX_GPIO_Init
+#define T8_MEAS_PORT GPIOB
+#define T8_MEAS_PIN  GPIO_PIN_7
+
+void run_task8_power_window_test(void)
+{
+    // --- 0) Pick ONE canonical test case (matches your other tasks) ---
+    const uint16_t W = 256;
+    const uint16_t H = 256;
+    const int      ITER = MAX_ITER;  // 100 as per constraints
+
+    t8_width  = W;
+    t8_height = H;
+
+    // --- 1) Optional: establish an IDLE baseline window (board steady state) ---
+    // Pull the marker LOW and let the board idle so you can read "idle current".
+    HAL_GPIO_WritePin(T8_MEAS_PORT, T8_MEAS_PIN, GPIO_PIN_RESET);
+    HAL_Delay(t8_ms_idle_mark);   // watch your power meter or scope during this period
+
+    // --- 2) ACTIVE compute window: pull marker HIGH, then run Mandelbrot once ---
+    uint32_t t0 = HAL_GetTick();
+    HAL_GPIO_WritePin(T8_MEAS_PORT, T8_MEAS_PIN, GPIO_PIN_SET);
+
+    // Use the same kernel you've benchmarked elsewhere (fixed-point is fine)
+    t8_checksum = calculate_mandelbrot_fixed_point_arithmetic(W, H, ITER);
+
+    HAL_GPIO_WritePin(T8_MEAS_PORT, T8_MEAS_PIN, GPIO_PIN_RESET);
+    uint32_t t1 = HAL_GetTick();
+    t8_ms_active = t1 - t0;   // this is the duration you integrate current over
+
+    task8_done = 1;
+
+    // Optional little blink to show "done"
+    HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_6);
 }
 
 /* USER CODE END 4 */
