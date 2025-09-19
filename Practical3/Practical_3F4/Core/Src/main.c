@@ -212,6 +212,8 @@ volatile uint16_t t8_height       = 0;
 volatile uint32_t t8_ms_active    = 0;   // compute window duration (ms)
 volatile uint64_t t8_checksum     = 0;   // checksum of the active test
 volatile uint32_t t8_ms_idle_mark = 2000; // ms the board idles for baseline measurement
+volatile uint64_t t8_checksum_sum = 0;
+volatile uint32_t t8_window_ms = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -1108,38 +1110,21 @@ void run_task7_fixed_scale_sweep(void)
 #define T8_MEAS_PORT GPIOB
 #define T8_MEAS_PIN  GPIO_PIN_7
 
-void run_task8_power_window_test(void)
-{
-    // --- 0) Pick ONE canonical test case (matches your other tasks) ---
-    const uint16_t W = 256;
-    const uint16_t H = 256;
-    const int      ITER = MAX_ITER;  // 100 as per constraints
-
-    t8_width  = W;
-    t8_height = H;
-
-    // --- 1) Optional: establish an IDLE baseline window (board steady state) ---
-    // Pull the marker LOW and let the board idle so you can read "idle current".
-    HAL_GPIO_WritePin(T8_MEAS_PORT, T8_MEAS_PIN, GPIO_PIN_RESET);
-    HAL_Delay(t8_ms_idle_mark);   // watch your power meter or scope during this period
-
-    // --- 2) ACTIVE compute window: pull marker HIGH, then run Mandelbrot once ---
+static void task8_long_window(uint16_t w, uint16_t h, int max_iter, int repeats) {
     uint32_t t0 = HAL_GetTick();
-    HAL_GPIO_WritePin(T8_MEAS_PORT, T8_MEAS_PIN, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7, GPIO_PIN_SET);  // start window
 
-    // Use the same kernel you've benchmarked elsewhere (fixed-point is fine)
-    t8_checksum = calculate_mandelbrot_fixed_point_arithmetic(W, H, ITER);
+    uint64_t sum = 0;
+    for (int i = 0; i < repeats; ++i) {
+        sum += calculate_mandelbrot_fixed_point_arithmetic(w, h, max_iter);
+    }
 
-    HAL_GPIO_WritePin(T8_MEAS_PORT, T8_MEAS_PIN, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7, GPIO_PIN_RESET); // end window
     uint32_t t1 = HAL_GetTick();
-    t8_ms_active = t1 - t0;   // this is the duration you integrate current over
 
-    task8_done = 1;
-
-    // Optional little blink to show "done"
-    HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_6);
+    t8_checksum_sum = sum;                 // keeps computation “live”
+    t8_window_ms    = (t1 - t0);           // actual window duration (ms)
 }
-
 /* USER CODE END 4 */
 
 /**
