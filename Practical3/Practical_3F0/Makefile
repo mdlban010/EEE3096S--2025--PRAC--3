@@ -94,7 +94,7 @@ BIN = $(CP) -O binary -S
 #######################################
 # cpu
 CPU = -mcpu=cortex-m0
-
+CFLAGS += -DOPT_LEVEL_STR=\"$(OPT)\"
 # fpu
 # NONE for Cortex-M0/M0+/M3
 

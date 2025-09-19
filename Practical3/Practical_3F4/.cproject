@@ -84,5 +84,33 @@
 		<project id="Practical_3F4.null.891977634" name="Practical_3F4"/>
 	</storageModule>
 	<storageModule moduleId="org.eclipse.cdt.core.LanguageSettingsProviders"/>
-	<storageModule moduleId="org.eclipse.cdt.make.core.buildtargets"/>
+	<storageModule moduleId="refreshScope"/>
+	<storageModule moduleId="org.eclipse.cdt.make.core.buildtargets">
+		<buildTargets>
+			<target name="optO0" path="" targetID="org.eclipse.cdt.build.MakeTargetBuilder">
+				<buildCommand>all</buildCommand>
+				<buildArguments>OPT=-O0</buildArguments>
+				<buildTarget>optO0</buildTarget>
+				<stopOnError>true</stopOnError>
+				<useDefaultCommand>false</useDefaultCommand>
+				<runAllBuilders>true</runAllBuilders>
+			</target>
+			<target name="opt_O2" path="" targetID="org.eclipse.cdt.build.MakeTargetBuilder">
+				<buildCommand>all</buildCommand>
+				<buildArguments>OPT=-O2</buildArguments>
+				<buildTarget>opt_O2</buildTarget>
+				<stopOnError>true</stopOnError>
+				<useDefaultCommand>false</useDefaultCommand>
+				<runAllBuilders>true</runAllBuilders>
+			</target>
+			<target name="opt_Os" path="" targetID="org.eclipse.cdt.build.MakeTargetBuilder">
+				<buildCommand>all</buildCommand>
+				<buildArguments>OPT=-Os</buildArguments>
+				<buildTarget>opt_Os</buildTarget>
+				<stopOnError>true</stopOnError>
+				<useDefaultCommand>false</useDefaultCommand>
+				<runAllBuilders>true</runAllBuilders>
+			</target>
+		</buildTargets>
+	</storageModule>
 </cproject>

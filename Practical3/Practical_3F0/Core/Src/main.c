@@ -21,7 +21,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include <limits.h>   // for INT32_MAX/MIN
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -51,6 +51,17 @@ typedef struct {
     uint64_t checksum;
     uint8_t processed_in_parts; // 0 = single run, 1-255 = number of parts
 } Task4Result;
+
+// ===== Task 7: Fixed-Point Scaling (works on F4 and F0) =====
+typedef struct {
+    int32_t   scale;                  // e.g. 1000, 10000, 1000000
+    uint16_t  width, height;          // image size
+    uint32_t  exec_time_ms;           // wall time
+    uint64_t  checksum_fixed;         // fixed-point checksum
+    uint64_t  checksum_double;        // double baseline checksum
+    uint64_t  abs_diff;               // |fixed - double|
+    uint32_t  overflow_events;        // number of clamps detected
+} Task7Result;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -108,7 +119,31 @@ volatile uint16_t t4_current_w = 0, t4_current_h = 0;
 volatile uint32_t t4_exec_ms = 0;
 volatile uint8_t t4_parts = 0;
 
+// ===== Task 6 (STM32F0) – Live Expressions =====
+volatile uint8_t  task6_done        = 0;     // becomes 1 when the sweep finishes
+volatile uint32_t t6_total_ms       = 0;     // total wall time (ms) across all sizes
+volatile uint32_t t6_total_pixels   = 0;     // sum of pixels processed
+volatile float    t6_throughput_pps = 0.0f;  // pixels per second
+volatile uint64_t t6_checksum_sink  = 0;
+// The P1B image sizes (same set you used on F0)
+static const uint16_t t6_sizes[][2] = {
+    {128,128}, {160,160}, {192,192}, {224,224}, {256,256}
+};
 
+#ifndef OPT_LEVEL_STR
+#define OPT_LEVEL_STR "-O?"      // set from Makefile; default if not provided
+#endif
+const char* opt_level = OPT_LEVEL_STR;
+
+// ---- Live Expressions to watch while Task 7 runs ----
+volatile uint8_t  task7_done          = 0;
+volatile int32_t  t7_scale            = 0;
+volatile uint16_t t7_width            = 0, t7_height = 0;
+volatile uint32_t t7_exec_ms          = 0;
+volatile uint64_t t7_checksum_fixed   = 0;
+volatile uint64_t t7_checksum_double  = 0;
+volatile uint64_t t7_abs_diff         = 0;
+volatile uint32_t t7_overflow_count   = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -120,6 +155,11 @@ uint64_t calculate_mandelbrot_fixed_point_arithmetic(int width, int height, int 
 static uint64_t get_time_us(void);
 static void run_task3_benchmark_f0(void);
 static void run_task4_scalability_test(void);
+void run_task6_total_runtime_f0(void);
+uint64_t calculate_mandelbrot_fixed_scaled(int width, int height, int max_iterations,
+                                           int32_t scale, uint32_t *overflow_ctr);
+void run_task7_fixed_scale_sweep(void);
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -212,7 +252,7 @@ int main(void)
       HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0|GPIO_PIN_1, GPIO_PIN_RESET);
       task3_done = 1;
 }
-    else if (!task4_done) {
+    else if (task4_done) {
     // Task 4: Scalability Test
     HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2, GPIO_PIN_SET); // LED2 for Task 4
     run_task4_scalability_test();
@@ -221,7 +261,17 @@ int main(void)
     HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2 | GPIO_PIN_3, GPIO_PIN_RESET);
     task4_done = 1;
 }
-
+else if (!task6_done) {
+        // Task 6: Compiler Optimizations Test
+        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4, GPIO_PIN_SET);
+        
+        run_task6_optimization_test();
+        
+        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_SET);
+        HAL_Delay(2000);
+        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4 | GPIO_PIN_5, GPIO_PIN_RESET);
+        task6_done = 1;
+}
 
 
   }
@@ -440,6 +490,50 @@ void run_task4_scalability_test(void) {
         
         HAL_Delay(100); // Short delay between tests
     }
+}
+void run_task6_total_runtime_f0(void)
+{
+    // Optional: quick LED blink to show Task 6 start (adjust port/pin to your board)
+    // HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);
+
+    t6_total_ms       = 0;
+    t6_total_pixels   = 0;
+    t6_throughput_pps = 0.0f;
+    t6_checksum_sink  = 0;
+
+    // Measure total time across the whole 5-size sweep
+    uint32_t t0 = HAL_GetTick();
+
+    for (unsigned i = 0; i < (sizeof(t6_sizes)/sizeof(t6_sizes[0])); ++i) {
+        const uint16_t w = t6_sizes[i][0];
+        const uint16_t h = t6_sizes[i][1];
+        t6_total_pixels += (uint32_t)w * (uint32_t)h;
+
+        // ---- Do the work: use your existing fixed-point Mandelbrot ----
+        // Must have: uint64_t calculate_mandelbrot_fixed_point_arithmetic(int w,int h,int max_iter);
+        uint64_t chk = calculate_mandelbrot_fixed_point_arithmetic(w, h, 100 /* MAX_ITER */);
+
+        // Consume result so it cannot be optimized away at -O2/-Os
+        t6_checksum_sink ^= chk;
+
+        // Optional: progress blink
+        // HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_1);
+    }
+
+    uint32_t t1 = HAL_GetTick();
+    t6_total_ms = (t1 - t0);
+
+    // Derive throughput (px/s). If timing <1 ms, consider repeating the sweep N times.
+    if (t6_total_ms > 0) {
+        t6_throughput_pps = (float)t6_total_pixels / ((float)t6_total_ms / 1000.0f);
+    } else {
+        t6_throughput_pps = 0.0f;
+    }
+
+    task6_done = 1;
+
+    // Optional: end LED
+    // HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);
 }
 
 /* USER CODE END 4 */

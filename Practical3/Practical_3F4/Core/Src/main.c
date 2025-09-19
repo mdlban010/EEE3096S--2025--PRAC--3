@@ -72,6 +72,13 @@ typedef struct {
     uint8_t fpu_enabled;
     uint8_t data_type;
 } Task5Result;
+
+typedef struct {
+    uint32_t binary_size;
+    uint32_t exec_time_ms;
+    uint64_t checksum;
+    const char* optimization_level; // String representation
+} Task6Result;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -167,11 +174,11 @@ volatile float    t5_throughput = 0.0f;
 volatile uint8_t  t5_fpu_enabled = 0;  // build-time status copied during run
 volatile uint8_t  t5_data_type = 0;    // 0 float, 1 double
 
-// Task 6 variables (Live Expressions)
-volatile uint8_t  task6_done = 0;
-volatile uint32_t t6_total_ms = 0;
-volatile uint32_t t6_total_cycles = 0;
-volatile uint32_t t6_total_pixels = 0;
+volatile Task6Result task6_results;
+volatile uint8_t task6_done = 0;
+volatile uint32_t t6_binary_size = 0;
+volatile uint32_t t6_exec_time = 0;
+volatile char t6_optimization_level[4] = "Og"; // Default
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -206,7 +213,8 @@ uint8_t is_fpu_enabled(void);
 void run_task5_fpu_test(void);
 
 static inline uint32_t cycles_delta(uint32_t start, uint32_t end);
-void run_task6_total_runtime(void);
+void run_task6_optimization_test(void);
+uint32_t get_binary_size(void);
 
 /* USER CODE END PFP */
 
@@ -291,6 +299,7 @@ int main(void)
         task1_double[i].exec_time_ms = exec_time_double;
         task1_double[i].checksum = checksum_double;
         
+
         progress++;
       }
 
@@ -368,7 +377,7 @@ int main(void)
     HAL_Delay(2000);
     HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2 | GPIO_PIN_3, GPIO_PIN_RESET);
     task4_done = 1;
-}
+    }
     else if (task5_done) {
         // Task 5: FPU Impact Test (STM32F4 only)
         HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4, GPIO_PIN_SET);
@@ -382,15 +391,21 @@ int main(void)
         HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4 | GPIO_PIN_5, GPIO_PIN_RESET);
         task5_done = 1;
     }
+    else if (!task6_done) {
+        // Task 6: Compiler Optimizations Test
+        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4, GPIO_PIN_SET);
+        
+        run_task6_optimization_test();
+        
+        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_SET);
+        HAL_Delay(2000);
+        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4 | GPIO_PIN_5, GPIO_PIN_RESET);
+        task6_done = 1;
+}
     // heartbeat led to show program is alive
     HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_2);
     HAL_Delay(1000);
   }
-  else if (!task6_done) {
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_SET);   // start LED
-    run_task6_total_runtime();
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_RESET); // end LED
-}
 
   /* USER CODE END 3 */
 }
@@ -838,45 +853,85 @@ static inline uint32_t cycles_delta(uint32_t start, uint32_t end) {
     return (uint32_t)(end - start);
 }
 
-void run_task6_total_runtime(void)
+/**
+ * @brief Run Task 6 compiler optimization test
+ */
+void run_task6_optimization_test(void)
 {
-    // Ensure DWT is ready
-    dwt_init();
-
-    // Use the same sizes as Practical 1B (you already have test_sizes[])
-    uint32_t pixels_sum = 0;
-    uint64_t checksum_sum = 0; // optional: lets you sanity-check results
-
-    // Start “whole program” timing
-    DWT->CYCCNT = 0;
-    uint32_t c0 = DWT->CYCCNT;
-    uint32_t t0 = HAL_GetTick();
-
-    for (unsigned i = 0; i < (sizeof(test_sizes)/sizeof(test_sizes[0])); ++i) {
-        uint16_t w = test_sizes[i][0];
-        uint16_t h = test_sizes[i][1];
-        pixels_sum += (uint32_t)w * (uint32_t)h;
-
-        // Use one consistent kernel (fixed-point is fine) and MAX_ITER=100
-        uint64_t chk = calculate_mandelbrot_fixed_point_arithmetic(w, h, MAX_ITER);
-        checksum_sum += chk;
-
-        HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_6); // progress blink
+    // START INDICATOR
+    for (int i = 0; i < 2; i++) {
+        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_SET);
+        HAL_Delay(200);
+        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_RESET);
+        HAL_Delay(200);
     }
-
-    uint32_t t1 = HAL_GetTick();
-    uint32_t c1 = DWT->CYCCNT;
-
-    t6_total_ms     = t1 - t0;
-    t6_total_cycles = c1 - c0;
-    t6_total_pixels = pixels_sum;
-
-    // optional: you can also compute overall throughput if you want to watch it
-    // float t6_throughput = (t6_total_ms>0) ? (float)pixels_sum / (t6_total_ms/1000.0f) : 0.0f;
-
+    
+    const uint16_t test_sizes[][2] = {
+        {128, 128}, {160, 160}, {192, 192}, {224, 224}, {256, 256}
+    };
+    
+    // Get binary size and optimization level
+    uint32_t binary_size = get_binary_size();
+    t6_binary_size = binary_size;
+    
+    // Test all image sizes but only record the first one for simplicity
+    for (int size_idx = 0; size_idx < 5; size_idx++) {
+        uint16_t width = test_sizes[size_idx][0];
+        uint16_t height = test_sizes[size_idx][1];
+        
+        // Progress indicator
+        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0 + size_idx, GPIO_PIN_SET);
+        
+        // Time the execution
+        DWT->CYCCNT = 0;
+        uint32_t start_time = HAL_GetTick();
+        
+        uint64_t checksum = calculate_mandelbrot_fixed_point_arithmetic(width, height, MAX_ITER);
+        
+        uint32_t end_time = HAL_GetTick();
+        uint32_t exec_time_ms = end_time - start_time;
+        
+        // Store results for the first size only
+        if (size_idx == 0) {
+            task6_results = (Task6Result){
+                .binary_size = binary_size,
+                .exec_time_ms = exec_time_ms,
+                .checksum = checksum,
+                .optimization_level = OPT_LEVEL_STR
+            };
+            
+            t6_exec_time = exec_time_ms;
+            // Copy optimization level string
+            for (int i = 0; i < 3 && OPT_LEVEL_STR[i] != '\0'; i++) {
+                t6_optimization_level[i] = OPT_LEVEL_STR[i];
+            }
+        }
+        
+        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0 + size_idx, GPIO_PIN_RESET);
+        HAL_Delay(50);
+    }
+    
+    // COMPLETION INDICATOR
+    for (int i = 0; i < 4; i++) {
+        HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_6);
+        HAL_Delay(100);
+    }
+    
     task6_done = 1;
 }
 
+/**
+ * @brief Get the binary size from linker symbols
+ * These symbols are automatically defined by the linker
+ */
+uint32_t get_binary_size(void)
+{
+    volatile Task6Result task6_results;
+    volatile uint8_t task6_done = 0;
+    volatile uint32_t t6_binary_size = 0;
+    volatile uint32_t t6_exec_time = 0;
+    volatile char t6_optimization_level[4] = "Og"; // Default
+}
 /* USER CODE END 4 */
 
 /**

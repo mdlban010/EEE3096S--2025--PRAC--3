@@ -104,6 +104,8 @@ FLOAT-ABI := -mfloat-abi=hard
 
 # mcu
 MCU = $(CPU) -mthumb $(FPU) $(FLOAT-ABI)
+CFLAGS += -DOPT_LEVEL_STR=\"$(OPT)\"
+
 
 # --- Convenience targets for Task 5 ------------------------
 .PHONY: fpu_on fpu_off
