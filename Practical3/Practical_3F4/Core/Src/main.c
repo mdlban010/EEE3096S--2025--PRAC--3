@@ -26,6 +26,7 @@
 #include "core_cm4.h"
 #include <stdio.h>
 #include <inttypes.h>
+#include <limits.h>   // for INT32_MIN / INT32_MAX
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -79,6 +80,17 @@ typedef struct {
     uint64_t checksum;
     const char* optimization_level; // String representation
 } Task6Result;
+
+// ===== Task 7: Fixed-Point Scaling (F4) =====
+typedef struct {
+    int32_t  scale;                  // e.g. 1000, 10000, 1000000
+    uint16_t width, height;          // image size
+    uint32_t exec_time_ms;           // wall time
+    uint64_t checksum_fixed;         // fixed-point checksum
+    uint64_t checksum_double;        // double baseline checksum
+    uint64_t abs_diff;               // |fixed - double|
+    uint32_t overflow_events;        // number of clamps detected
+} Task7Result;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -179,6 +191,19 @@ volatile uint8_t task6_done = 0;
 volatile uint32_t t6_binary_size = 0;
 volatile uint32_t t6_exec_time = 0;
 volatile char t6_optimization_level[4] = "Og"; // Default
+
+// 3 scales × 5 sizes
+volatile Task7Result task7_results[3][5];
+
+// ---- Live Expressions (watch these) ----
+volatile uint8_t  task7_done          = 0;
+volatile int32_t  t7_scale            = 0;
+volatile uint16_t t7_width            = 0, t7_height = 0;
+volatile uint32_t t7_exec_ms          = 0;
+volatile uint64_t t7_checksum_fixed   = 0;
+volatile uint64_t t7_checksum_double  = 0;
+volatile uint64_t t7_abs_diff         = 0;
+volatile uint32_t t7_overflow_count   = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -192,6 +217,11 @@ uint64_t calculate_mandelbrot_double(int width, int height, int max_iterations);
 void dwt_init(void);
 void run_task3_benchmark(void);
 void run_task4_scalability_test_f4(void);
+// TASK7
+uint64_t calculate_mandelbrot_fixed_scaled(int width, int height, int max_iterations,
+                                           int32_t scale, uint32_t *overflow_ctr);
+void run_task7_fixed_scale_sweep(void);
+
 
 //// TASK -5
 //void run_task5_fpu_test(void);
@@ -391,7 +421,7 @@ int main(void)
         HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4 | GPIO_PIN_5, GPIO_PIN_RESET);
         task5_done = 1;
     }
-    else if (!task6_done) {
+    else if (task6_done) {
         // Task 6: Compiler Optimizations Test
         HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4, GPIO_PIN_SET);
         
@@ -402,6 +432,18 @@ int main(void)
         HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4 | GPIO_PIN_5, GPIO_PIN_RESET);
         task6_done = 1;
 }
+    else if (!task7_done) {
+        // Start marker
+        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4, GPIO_PIN_SET);
+
+        run_task7_fixed_scale_sweep();
+
+        // Done marker
+        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_SET);
+        HAL_Delay(500);
+        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4 | GPIO_PIN_5, GPIO_PIN_RESET);
+    }
+
     // heartbeat led to show program is alive
     HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_2);
     HAL_Delay(1000);
@@ -932,6 +974,114 @@ uint32_t get_binary_size(void)
     volatile uint32_t t6_exec_time = 0;
     volatile char t6_optimization_level[4] = "Og"; // Default
 }
+
+uint64_t calculate_mandelbrot_fixed_scaled(int width, int height, int max_iterations,
+                                           int32_t scale, uint32_t *overflow_ctr)
+{
+    // Precompute scaled constants for plane mapping: 3.5, 2.5, 2.0, 1.0
+    const int32_t C3_5 = (int32_t)((int64_t)scale * 35 / 10);
+    const int32_t C2_5 = (int32_t)((int64_t)scale * 25 / 10);
+    const int32_t C2_0 = 2 * scale;
+    const int32_t C1_0 = 1 * scale;
+    const int64_t FOUR_S = 4LL * scale; // radius^2 threshold in scaled domain
+
+    uint64_t mandelbrot_sum = 0;
+    if (overflow_ctr) *overflow_ctr = 0;
+
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+
+            // Map pixel -> complex plane (scaled)
+            int32_t x0 = (int32_t)(((int64_t)x * C3_5) / width) - C2_5;
+            int32_t y0 = (int32_t)(((int64_t)y * C2_0) / height) - C1_0;
+
+            int32_t xi = 0, yi = 0;
+            int iterations = 0;
+
+            while (iterations < max_iterations) {
+                // (xi^2 + yi^2) in scaled domain
+                int64_t xi2 = ((int64_t)xi * (int64_t)xi) / scale;
+                int64_t yi2 = ((int64_t)yi * (int64_t)yi) / scale;
+                if ((xi2 + yi2) > FOUR_S) break;
+
+                // z = z^2 + c
+                int64_t temp   = xi2 - yi2;                // scaled
+                int64_t two_xy = (2LL * xi * yi) / scale;  // scaled
+
+                int64_t new_xi = temp + x0;                // scaled
+                int64_t new_yi = two_xy + y0;              // scaled
+
+                // Clamp to int32_t range & count any clamping
+                if (new_xi > INT32_MAX) { new_xi = INT32_MAX; if (overflow_ctr) (*overflow_ctr)++; }
+                if (new_xi < INT32_MIN) { new_xi = INT32_MIN; if (overflow_ctr) (*overflow_ctr)++; }
+                if (new_yi > INT32_MAX) { new_yi = INT32_MAX; if (overflow_ctr) (*overflow_ctr)++; }
+                if (new_yi < INT32_MIN) { new_yi = INT32_MIN; if (overflow_ctr) (*overflow_ctr)++; }
+
+                xi = (int32_t)new_xi;
+                yi = (int32_t)new_yi;
+                iterations++;
+            }
+            mandelbrot_sum += (uint64_t)iterations;
+        }
+    }
+    return mandelbrot_sum;
+}
+
+
+void run_task7_fixed_scale_sweep(void)
+{
+    const int32_t scales[3] = { 1000, 10000, 1000000 }; // 10^3, 10^4, 10^6
+
+    for (int si = 0; si < 3; ++si) {
+        int32_t scale = scales[si];
+
+        for (int sz = 0; sz < 5; ++sz) {
+            uint16_t w = test_sizes[sz][0];
+            uint16_t h = test_sizes[sz][1];
+
+            // Live vars for screenshots
+            t7_scale  = scale;
+            t7_width  = w;
+            t7_height = h;
+
+            // Double baseline
+            uint64_t chk_d = calculate_mandelbrot_double(w, h, MAX_ITER);
+
+            // Timed fixed-point run at this scale
+            uint32_t ovf = 0;
+            uint32_t t0  = HAL_GetTick();
+            uint64_t chk_f = calculate_mandelbrot_fixed_scaled(w, h, MAX_ITER, scale, &ovf);
+            uint32_t t1  = HAL_GetTick();
+            uint32_t dt  = t1 - t0;
+
+            // Store
+            uint64_t diff = (chk_f > chk_d) ? (chk_f - chk_d) : (chk_d - chk_f);
+            task7_results[si][sz] = (Task7Result){
+                .scale = scale,
+                .width = w, .height = h,
+                .exec_time_ms = dt,
+                .checksum_fixed = chk_f,
+                .checksum_double = chk_d,
+                .abs_diff = diff,
+                .overflow_events = ovf
+            };
+
+            // Update live expressions
+            t7_exec_ms         = dt;
+            t7_checksum_fixed  = chk_f;
+            t7_checksum_double = chk_d;
+            t7_abs_diff        = diff;
+            t7_overflow_count  = ovf;
+
+            // Optional progress LED (PB6 blink)
+            HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_6);
+            HAL_Delay(50);
+        }
+    }
+
+    task7_done = 1;
+}
+
 /* USER CODE END 4 */
 
 /**
